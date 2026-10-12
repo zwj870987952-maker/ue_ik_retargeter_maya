@@ -46,25 +46,45 @@ class RetargetSkeleton(object):
 
     def cache_reference_tpose(self):
         """
-        Captures the pristine zero-rotation reference pose (T-pose) by temporarily
-        disconnecting driving anim curves, caching rest transforms, and reconnecting.
+        Captures the pristine zero-rotation / bind reference pose (T-pose).
+        Uses dagPose (bindPose) if available to restore true canonical bind transforms,
+        otherwise temporarily disconnects driving anim curves, caches rest transforms,
+        and reconnects without zeroing out rest orientations.
         """
-        connections = []
+        bind_poses = set()
         for j_name in self.joint_names:
-            for attr in ['rotateX', 'rotateY', 'rotateZ']:
-                plug = '{}.{}'.format(j_name, attr)
-                inputs = cmds.listConnections(plug, source=True, destination=False, plugs=True) or []
-                if inputs:
-                    cmds.disconnectAttr(inputs[0], plug)
-                    connections.append((inputs[0], plug))
-                cmds.setAttr(plug, 0.0)
+            conns = cmds.listConnections(j_name, type='dagPose') or []
+            for dp in conns:
+                if cmds.objExists(dp + '.bindPose') and cmds.getAttr(dp + '.bindPose'):
+                    bind_poses.add(dp)
 
-        # Cache the pristine rest pose
-        self.cache_rest_pose()
+        if bind_poses:
+            curr_time = cmds.currentTime(q=True)
+            for bp in bind_poses:
+                try:
+                    cmds.dagPose(bp, restore=True)
+                except Exception:
+                    pass
+            cmds.refresh()
+            self.cache_rest_pose()
+            cmds.currentTime(curr_time, update=True)
+            cmds.refresh()
+        else:
+            connections = []
+            for j_name in self.joint_names:
+                for attr in ['rotateX', 'rotateY', 'rotateZ']:
+                    plug = '{}.{}'.format(j_name, attr)
+                    inputs = cmds.listConnections(plug, source=True, destination=False, plugs=True) or []
+                    if inputs:
+                        cmds.disconnectAttr(inputs[0], plug)
+                        connections.append((inputs[0], plug))
 
-        # Restore animation connections
-        for src, dst in connections:
-            cmds.connectAttr(src, dst)
+            cmds.refresh()
+            self.cache_rest_pose()
+
+            for src, dst in connections:
+                cmds.connectAttr(src, dst)
+            cmds.refresh()
 
     def cache_rest_pose(self):
         """

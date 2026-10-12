@@ -145,12 +145,12 @@ class IKChainSolver(object):
 
         self.tgt_initial_limb_length = max(1e-4, (tgt_end_pos - tgt_start_pos).length())
 
-    def calculate_goal_transform(self, source_current_pose_dict, target_current_start_pos, pelvis_translation_delta=None):
+    def calculate_goal_transform(self, source_current_pose_dict, target_current_start_pos, pelvis_translation_delta=None, affect_ik_vertical=True):
         """
         Calculates world-space position and rotation for the target IK goal.
         Matches UE5's FIKChainRetargeter & RunIKRigOp lines 120-136:
         - Normalized limb extension ratio
-        - InvRootModification (pelvis vertical movement isolation for ground pinning)
+        - InvRootModification (pelvis vertical movement isolation for ground pinning when affect_ik_vertical is False)
         """
         src_start_bone = self.src_chain.start_bone
         src_end_bone = self.src_chain.end_bone
@@ -168,11 +168,10 @@ class IKChainSolver(object):
         src_end_dir_normalized = src_dir * normalized_extension
 
         # 2. InvRootModification (UE5 RunIKRigOp.cpp lines 127-133)
-        # In UE (Z is Up): AffectIKHorizontal=1.0, AffectIKVertical=0.0 -> InvAffectIK=(0, 0, 1)
-        # In Maya (Y is Up): AffectIKHorizontal=1.0 (X,Z), AffectIKVertical=0.0 (Y) -> InvAffectIK=(0, 1, 0)
+        # Default in UE5 is affect_ik_vertical=True (pelvis translates IK goals naturally)
         inv_root_modification = om.MVector(0, 0, 0)
-        if pelvis_translation_delta is not None:
-            # Only isolate vertical pelvis movement from pulling IK goals
+        if not affect_ik_vertical and pelvis_translation_delta is not None:
+            # Only isolate vertical pelvis movement from pulling IK goals when specifically requested
             inv_root_modification = om.MVector(0.0, pelvis_translation_delta.y, 0.0)
 
         adjusted_target_start = target_current_start_pos - inv_root_modification
