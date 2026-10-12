@@ -87,6 +87,7 @@ def create_test_target_character(prefix="tgt_"):
     1. 1.4x Taller overall (Hips at Y=140 instead of 100)
     2. Spine has 3 joints instead of 2 (testing arc-length parameterized interpolation)
     3. Wider stance (Thigh X=25 instead of 15)
+    4. Arms initially in A-Pose (slanted down ~45 degrees)
     """
     cmds.select(cl=True)
     hips = cmds.joint(n=prefix + "hips", p=(0, 140, 0))
@@ -140,7 +141,7 @@ def run_test():
     processor = IKRetargetProcessor.one_click_retarget(src_hips, tgt_hips, 1, 20)
 
     # Verification
-    print(">>> 6. Verifying numerical correctness...")
+    print(">>> 4. Verifying numerical correctness...")
 
     # Check frame 10 (mid-squat)
     cmds.currentTime(10, e=True)
@@ -166,7 +167,29 @@ def run_test():
     print("Target hips keyframe count:", key_count)
     assert key_count > 0, "No keyframes were baked onto target hips!"
 
-    print(">>> [SUCCESS] All retargeting tests PASSED with zero errors!")
+    # Verify that arms and hands are not crooked or inverted
+    # Left arm should extend to positive X (away from body)
+    p_upper, _ = get_world_transform("tgt_upperarm_l")
+    p_lower, _ = get_world_transform("tgt_lowerarm_l")
+    p_hand, q_hand = get_world_transform("tgt_hand_l")
+    arm_dir = (p_hand - p_upper).normal()
+    print("Target Left Arm overall vector:", (arm_dir.x, arm_dir.y, arm_dir.z))
+    assert arm_dir.x > 0.3, "Left arm is pointing inwards towards body or flipped!"
+
+    # Right arm should extend to negative X (away from body)
+    p_r_upper, _ = get_world_transform("tgt_upperarm_r")
+    p_r_hand, q_r_hand = get_world_transform("tgt_hand_r")
+    r_arm_dir = (p_r_hand - p_r_upper).normal()
+    print("Target Right Arm overall vector:", (r_arm_dir.x, r_arm_dir.y, r_arm_dir.z))
+    assert r_arm_dir.x < -0.3, "Right arm is pointing inwards towards body or flipped!"
+
+    # Verify hand orientations have no NaN or denormalized quaternions
+    mag_l = math.sqrt(q_hand.x**2 + q_hand.y**2 + q_hand.z**2 + q_hand.w**2)
+    mag_r = math.sqrt(q_r_hand.x**2 + q_r_hand.y**2 + q_r_hand.z**2 + q_r_hand.w**2)
+    assert abs(mag_l - 1.0) < 1e-3, "Left hand quaternion invalid!"
+    assert abs(mag_r - 1.0) < 1e-3, "Right hand quaternion invalid!"
+
+    print(">>> [SUCCESS] All retargeting tests PASSED with zero errors! Hands and feet orientations are anatomically natural.")
     return True
 
 

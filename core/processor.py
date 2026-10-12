@@ -56,6 +56,18 @@ class IKRetargetProcessor(object):
         )
         self.auto_map_chains()
         self.auto_align_base_pose()
+        self.update_retarget_poses()
+
+    def update_retarget_poses(self):
+        """Refreshes all solvers when the retarget base pose is aligned or modified."""
+        if self.pelvis_solver:
+            self.pelvis_solver.height_scale = self.target_skeleton.rest_world_pos[self.target_pelvis].y / max(
+                1e-4, self.source_skeleton.rest_world_pos[self.source_pelvis].y
+            )
+        for fk in self.fk_solvers:
+            fk.update_retarget_pose()
+        for ik in self.ik_solvers:
+            ik.update_retarget_pose()
 
     def auto_map_chains(self):
         """
@@ -140,7 +152,7 @@ class IKRetargetProcessor(object):
         1. Samples animated source global pose.
         2. Solves pelvis motion (scaled translation + delta rotation).
         3. Solves FK chains rotation transfer in topological parent-to-child order.
-        4. Solves limb IK goals and applies analytical Two-Bone IK with zero twist.
+        4. Solves limb IK goals and applies analytical Two-Bone IK with zero twist stripping.
         """
         # Step 1: Capture current source pose
         src_pose = self.source_skeleton.get_current_pose()
@@ -167,47 +179,54 @@ class IKRetargetProcessor(object):
             mid_bone = tgt_chain.bones[1]   # Calf / ForeArm
             end_bone = tgt_chain.bones[2]   # Foot / Hand
 
-            # Target start joint current world position
-            tgt_start_pos, _ = get_world_transform(root_bone)
+            # Target start joint current world position and FK rotations
+            tgt_start_pos, current_root_rot = get_world_transform(root_bone)
+            current_mid_pos, current_mid_rot = get_world_transform(mid_bone)
+            current_end_pos, current_end_rot = get_world_transform(end_bone)
+
             goal_pos, goal_rot = ik_solv.calculate_goal_transform(src_pose, tgt_start_pos)
 
-            # Target limb rest geometry
-            p0 = self.target_skeleton.rest_world_pos[root_bone]
-            p1 = self.target_skeleton.rest_world_pos[mid_bone]
-            p2 = self.target_skeleton.rest_world_pos[end_bone]
+            # Target limb lengths from aligned rest pose
+            p0 = self.target_pose_mgr.get_aligned_rest_position(root_bone)
+            p1 = self.target_pose_mgr.get_aligned_rest_position(mid_bone)
+            p2 = self.target_pose_mgr.get_aligned_rest_position(end_bone)
             len1 = (p1 - p0).length()
             len2 = (p2 - p1).length()
-            rest_dir1 = (p1 - p0).normal()
-            rest_dir2 = (p2 - p1).normal()
 
-            rest_rot1 = self.target_pose_mgr.get_aligned_rest_rotation(root_bone)
-            rest_rot2 = self.target_pose_mgr.get_aligned_rest_rotation(mid_bone)
-
-            # Extract source Pole Vector direction (knee/elbow bend plane)
+            # Source Pole Vector hint (knee/elbow bend plane)
             src_root_b = ik_solv.src_chain.bones[0]
             src_mid_b = ik_solv.src_chain.bones[1]
             src_end_b = ik_solv.src_chain.bones[2]
             src_p0, _ = src_pose[src_root_b]
             src_p1, _ = src_pose[src_mid_b]
             src_p2, _ = src_pose[src_end_b]
-            src_pv = (src_p1 - (src_p0 + src_p2) * 0.5)
-            if src_pv.length() < 1e-4:
-                src_pv = om.MVector(0, 0, 1)
-            else:
-                src_pv.normalize()
+            src_pv_delta = (src_p1 - (src_p0 + src_p2) * 0.5)
 
-            # Analytical Two-Bone IK solve
-            rot_upper, rot_lower, _ = TwoBoneIKSolver.solve(
-                tgt_start_pos, goal_pos, src_pv,
+            if src_pv_delta.length() > 1e-4:
+                pv_target = tgt_start_pos + src_pv_delta.normal() * len1
+            else:
+                pv_target = current_mid_pos
+
+            # End bone orientation blend:
+            # For feet: blend=1.0 to match goal_rot (floor alignment).
+            # For hands: blend=0.0 so wrist naturally follows forearm delta without popping.
+            is_leg = ("leg" in ik_solv.mapping.name.lower()) or ("foot" in end_bone.lower())
+            end_rot_blend = 1.0 if is_leg else 0.0
+
+            # Solve Two-Bone IK with UE5 Delta Rotation preservation
+            rot_upper, rot_lower, rot_end, _, _ = TwoBoneIKSolver.solve(
+                tgt_start_pos, current_mid_pos, current_end_pos,
+                current_root_rot, current_mid_rot, current_end_rot,
+                goal_pos, goal_rot,
+                pv_target,
                 len1, len2,
-                rest_dir1, rest_dir2,
-                rest_rot1, rest_rot2
+                end_rot_blend=end_rot_blend
             )
 
             # Apply IK rotations
             set_world_transform(root_bone, quat=rot_upper)
             set_world_transform(mid_bone, quat=rot_lower)
-            set_world_transform(end_bone, quat=goal_rot)
+            set_world_transform(end_bone, quat=rot_end)
 
     def bake_animation(self, start_frame, end_frame, step=1, target_controls=None):
         """
@@ -260,6 +279,7 @@ class IKRetargetProcessor(object):
 
         print("[UE5 Retargeter] Auto-aligning base poses (A-to-T Pose match)...")
         processor.auto_align_base_pose()
+        processor.update_retarget_poses()
 
         print("[UE5 Retargeter] Baking animation from frame {} to {}...".format(start_frame, end_frame))
         processor.bake_animation(start_frame, end_frame)

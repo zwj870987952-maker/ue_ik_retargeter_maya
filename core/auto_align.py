@@ -55,8 +55,15 @@ class AutoPoseAligner(object):
             root_bone = tgt_chain.bones[0]
             pose_mgr.delta_rotations[root_bone] = world_align_rot
 
+        # Recompute full hierarchy transforms with the new alignment deltas
+        pose_mgr.recompute_aligned_transforms()
+
         # Automatic Ground Snapping (Matches UE5 FRetargetAutoPoseGenerator::SnapToGround)
         AutoPoseAligner.snap_to_ground(processor)
+
+        # Notify processor to update all solvers with the newly aligned pose
+        if hasattr(processor, "update_retarget_poses"):
+            processor.update_retarget_poses()
 
     @staticmethod
     def snap_to_ground(processor):
@@ -65,11 +72,12 @@ class AutoPoseAligner(object):
         matching the source character's grounding height.
         """
         tgt_skel = processor.target_skeleton
+        pose_mgr = processor.target_pose_mgr
         lowest_y = 999999.0
         lowest_bone = None
 
         for b in tgt_skel.joint_names:
-            pos = tgt_skel.rest_world_pos[b]
+            pos = pose_mgr.get_aligned_rest_position(b)
             if pos.y < lowest_y:
                 lowest_y = pos.y
                 lowest_bone = b
@@ -77,4 +85,5 @@ class AutoPoseAligner(object):
         if lowest_bone:
             # If lowest foot is offset from ground level (Y=0), compensate pelvis
             ground_offset = 0.0 - lowest_y
-            processor.target_pose_mgr.root_translation_offset = om.MVector(0, ground_offset, 0)
+            pose_mgr.root_translation_offset = om.MVector(0, ground_offset, 0)
+            pose_mgr.recompute_aligned_transforms()

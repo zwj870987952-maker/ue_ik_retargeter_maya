@@ -130,3 +130,8 @@ def quat_between_vectors(v_from, v_to):
     q = om.MQuaternion(axis.x, axis.y, axis.z, w)
     q.normalizeIt()
     return q
+
+
+def rotate_vector_by_quat(v, q):
+    """Rotates an MVector by an MQuaternion in OpenMaya 2.0."""
+    return om.MVector(v).rotateBy(q)

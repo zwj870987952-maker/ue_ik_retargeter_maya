@@ -20,8 +20,12 @@ class FKChainSolver(object):
         self.src_chain = mapping.source_chain
         self.tgt_chain = mapping.target_chain
         self.target_pose_mgr = target_pose_mgr
+        self.target_aligned_rot = {}
 
-        # Cache initial rotations
+        self.update_retarget_pose()
+
+    def update_retarget_pose(self):
+        """Updates cached aligned rest rotations when retarget pose is modified."""
         self.target_aligned_rot = {}
         for b in self.tgt_chain.bones:
             if self.target_pose_mgr:
@@ -55,11 +59,15 @@ class FKChainSolver(object):
                 )
 
             # Delta: R_delta = R_src_current * R_src_initial^-1
-            rot_delta = src_curr_rot * src_init_rot.inverse()
+            rot_delta = (src_curr_rot * src_init_rot.inverse()).normal()
 
             # Apply delta to target aligned rest rotation: R_tgt = R_delta * R_tgt_rest
-            tgt_rest_rot = self.target_aligned_rot[tgt_bone]
-            final_rot = rot_delta * tgt_rest_rot
+            if self.target_pose_mgr:
+                tgt_rest_rot = self.target_pose_mgr.get_aligned_rest_rotation(tgt_bone)
+            else:
+                tgt_rest_rot = self.target_aligned_rot.get(tgt_bone, self.tgt_chain.skeleton.rest_world_rot[tgt_bone])
+
+            final_rot = (rot_delta * tgt_rest_rot).normal()
             solved_rotations[tgt_bone] = final_rot
 
         return solved_rotations
