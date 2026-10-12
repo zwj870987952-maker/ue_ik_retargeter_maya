@@ -1,0 +1,19 @@
+// Drag and drop this MEL script into Maya viewport to add the IK Retargeter button to your current shelf
+global proc install_ue_retargeter()
+{
+    string $currentShelf = `tabLayout -q -selectTab "ShelfLayout"`;
+    if ($currentShelf != "")
+    {
+        setParent $currentShelf;
+        string $pythonCmd = "import sys, os; p = r'c:/Users/zwj87/Documents/逆向'; sys.path.insert(0, p) if p not in sys.path else None; import ue_ik_retargeter_maya; ue_ik_retargeter_maya.show_ui()";
+        shelfButton
+            -command $pythonCmd
+            -annotation "UE5 IK Retargeter for Maya"
+            -label "UE_IK"
+            -image "kinConnect.png"
+            -imageOverlayLabel "UE_IK"
+            -sourceType "python";
+        print("\n[UE IK Retargeter] Added button to shelf: " + $currentShelf + "\n");
+    }
+}
+install_ue_retargeter();
