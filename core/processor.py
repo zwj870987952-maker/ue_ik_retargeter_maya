@@ -2,6 +2,7 @@
 """
 Main retarget processor coordinating pelvis, FK chains, and IK goals.
 Directly implements UE5's FIKRetargetProcessor (IKRetargetProcessor.cpp).
+Automates chain mapping, pose alignment, and baking with zero manual setup.
 """
 
 import maya.cmds as cmds
@@ -11,8 +12,9 @@ from .chains import BoneChain, ChainMapping, CHAIN_PATTERNS
 from .retarget_pose import RetargetPoseManager
 from .pelvis_solver import PelvisMotionSolver
 from .fk_solver import FKChainSolver
-from .ik_solver import IKChainSolver
-from .math_utils import set_world_transform, get_world_transform, quat_between_vectors
+from .ik_solver import IKChainSolver, TwoBoneIKSolver
+from .auto_align import AutoPoseAligner
+from .math_utils import set_world_transform, get_world_transform
 
 
 class IKRetargetProcessor(object):
@@ -27,7 +29,7 @@ class IKRetargetProcessor(object):
         self.source_pelvis = source_pelvis or source_root
         self.target_pelvis = target_pelvis or target_root
 
-        # Skeletons
+        # Initialize Skeletons
         self.source_skeleton = RetargetSkeleton(self.source_root)
         self.target_skeleton = RetargetSkeleton(self.target_root)
 
@@ -40,10 +42,11 @@ class IKRetargetProcessor(object):
         self.fk_solvers = []
         self.ik_solvers = []
 
+        # Auto-configure chains and auto-align poses out of the box
         self.setup_default_chains()
 
     def setup_default_chains(self):
-        """Discovers standard chains and initializes default solvers."""
+        """Discovers standard chains, auto-aligns base pose, and initializes solvers."""
         self.pelvis_solver = PelvisMotionSolver(
             self.source_pelvis,
             self.target_pelvis,
@@ -51,9 +54,62 @@ class IKRetargetProcessor(object):
             self.target_skeleton,
             self.target_pose_mgr
         )
+        self.auto_map_chains()
+        self.auto_align_base_pose()
+
+    def auto_map_chains(self):
+        """
+        Fuzzy matches bones on source and target based on standard naming conventions.
+        Supports Mixamo, UE Mannequin, AdvancedSkeleton, Biped, DAZ, HumanIK.
+        """
         self.chain_mappings.clear()
         self.fk_solvers.clear()
         self.ik_solvers.clear()
+
+        src_joints = self.source_skeleton.joint_names
+        tgt_joints = self.target_skeleton.joint_names
+
+        def find_match(joint_list, pattern_list):
+            for pat in pattern_list:
+                clean_pat = pat.replace('*', '').lower()
+                for j in joint_list:
+                    j_clean = j.split(':')[-1].lower()  # Strip namespace
+                    if clean_pat in j_clean:
+                        return j
+            return None
+
+        # Auto-match Pelvis
+        pelvis_pats = CHAIN_PATTERNS['Pelvis']['patterns']
+        src_pelvis_found = find_match(src_joints, pelvis_pats)
+        tgt_pelvis_found = find_match(tgt_joints, pelvis_pats)
+        if src_pelvis_found and tgt_pelvis_found:
+            self.source_pelvis = src_pelvis_found
+            self.target_pelvis = tgt_pelvis_found
+            self.pelvis_solver = PelvisMotionSolver(
+                self.source_pelvis, self.target_pelvis,
+                self.source_skeleton, self.target_skeleton,
+                self.target_pose_mgr
+            )
+
+        # Auto-match Chains
+        for chain_name, defs in CHAIN_PATTERNS.items():
+            if chain_name == 'Pelvis':
+                continue
+            src_start = find_match(src_joints, defs['start'])
+            src_end = find_match(src_joints, defs['end'])
+            tgt_start = find_match(tgt_joints, defs['start'])
+            tgt_end = find_match(tgt_joints, defs['end'])
+
+            if src_start and src_end and tgt_start and tgt_end:
+                enable_ik = defs.get('is_limb', False)
+                self.add_chain_mapping(chain_name, src_start, src_end, tgt_start, tgt_end, enable_ik=enable_ik)
+
+    def auto_align_base_pose(self):
+        """
+        Automatically aligns A-Pose to T-Pose (and vice-versa) using UE5 ChainToChain tangents.
+        Fully automated: no manual viewport joint rotation needed.
+        """
+        AutoPoseAligner.align_chains(self)
 
     def add_chain_mapping(self, name, src_start, src_end, tgt_start, tgt_end, enable_ik=False):
         """Adds a retarget chain mapping between source and target joints."""
@@ -78,60 +134,13 @@ class IKRetargetProcessor(object):
 
         return True
 
-    def auto_map_chains(self):
-        """
-        Fuzzy matches bones on source and target based on standard naming conventions.
-        Supports Mixamo, UE Mannequin, AdvancedSkeleton, Biped.
-        """
-        self.chain_mappings.clear()
-        self.fk_solvers.clear()
-        self.ik_solvers.clear()
-
-        src_joints = self.source_skeleton.joint_names
-        tgt_joints = self.target_skeleton.joint_names
-
-        def find_match(joint_list, pattern_list):
-            for pat in pattern_list:
-                clean_pat = pat.replace('*', '').lower()
-                for j in joint_list:
-                    j_clean = j.split(':')[-1].lower()  # Remove namespace
-                    if clean_pat in j_clean:
-                        return j
-            return None
-
-        # Auto-match pelvis
-        pelvis_pats = CHAIN_PATTERNS['Pelvis']['patterns']
-        src_pelvis_found = find_match(src_joints, pelvis_pats)
-        tgt_pelvis_found = find_match(tgt_joints, pelvis_pats)
-        if src_pelvis_found and tgt_pelvis_found:
-            self.source_pelvis = src_pelvis_found
-            self.target_pelvis = tgt_pelvis_found
-            self.pelvis_solver = PelvisMotionSolver(
-                self.source_pelvis, self.target_pelvis,
-                self.source_skeleton, self.target_skeleton,
-                self.target_pose_mgr
-            )
-
-        # Auto-match chains
-        for chain_name, defs in CHAIN_PATTERNS.items():
-            if chain_name == 'Pelvis':
-                continue
-            src_start = find_match(src_joints, defs['start'])
-            src_end = find_match(src_joints, defs['end'])
-            tgt_start = find_match(tgt_joints, defs['start'])
-            tgt_end = find_match(tgt_joints, defs['end'])
-
-            if src_start and src_end and tgt_start and tgt_end:
-                enable_ik = defs.get('is_limb', False)
-                self.add_chain_mapping(chain_name, src_start, src_end, tgt_start, tgt_end, enable_ik=enable_ik)
-
     def retarget_frame(self):
         """
-        Processes a single frame:
+        Executes complete retarget pipeline for current frame:
         1. Samples animated source global pose.
         2. Solves pelvis motion (scaled translation + delta rotation).
-        3. Solves FK chains rotation transfer.
-        4. Solves IK goals and applies analytical Two-Bone IK on limbs.
+        3. Solves FK chains rotation transfer in topological parent-to-child order.
+        4. Solves limb IK goals and applies analytical Two-Bone IK with zero twist.
         """
         # Step 1: Capture current source pose
         src_pose = self.source_skeleton.get_current_pose()
@@ -141,57 +150,63 @@ class IKRetargetProcessor(object):
         tgt_pelvis_pos, tgt_pelvis_rot = self.pelvis_solver.solve(src_pelvis_pos, src_pelvis_rot)
         set_world_transform(self.target_pelvis, tgt_pelvis_pos, tgt_pelvis_rot)
 
-        # Step 3: Solve FK Chains
+        # Step 3: Solve FK Chains (Spine, Neck, Head, Base limb rotation)
         for fk_solv in self.fk_solvers:
             chain_rotations = fk_solv.solve(src_pose)
-            for tgt_joint, world_rot in chain_rotations.items():
-                set_world_transform(tgt_joint, quat=world_rot)
+            for tgt_joint in fk_solv.tgt_chain.bones:
+                if tgt_joint in chain_rotations:
+                    set_world_transform(tgt_joint, quat=chain_rotations[tgt_joint])
 
-        # Step 4: Solve IK Chains (for limbs: LeftLeg, RightLeg, LeftArm, RightArm)
+        # Step 4: Solve IK Chains (Limbs: LeftLeg, RightLeg, LeftArm, RightArm)
         for ik_solv in self.ik_solvers:
             tgt_chain = ik_solv.tgt_chain
             if len(tgt_chain.bones) < 3:
                 continue
 
-            # Start joint (e.g. Thigh) current world position
-            root_bone = tgt_chain.bones[0]
-            mid_bone = tgt_chain.bones[1]
-            end_bone = tgt_chain.bones[2]
+            root_bone = tgt_chain.bones[0]  # Thigh / UpperArm
+            mid_bone = tgt_chain.bones[1]   # Calf / ForeArm
+            end_bone = tgt_chain.bones[2]   # Foot / Hand
 
+            # Target start joint current world position
             tgt_start_pos, _ = get_world_transform(root_bone)
             goal_pos, goal_rot = ik_solv.calculate_goal_transform(src_pose, tgt_start_pos)
 
-            # Get bone lengths
+            # Target limb rest geometry
             p0 = self.target_skeleton.rest_world_pos[root_bone]
             p1 = self.target_skeleton.rest_world_pos[mid_bone]
             p2 = self.target_skeleton.rest_world_pos[end_bone]
-            upper_len = (p1 - p0).length()
-            lower_len = (p2 - p1).length()
-
-            # Source pole vector hint
-            src_root_pos, _ = src_pose[ik_solv.src_chain.bones[0]]
-            src_mid_pos, _ = src_pose[ik_solv.src_chain.bones[1]]
-            src_end_pos, _ = src_pose[ik_solv.src_chain.bones[2]]
-            src_pv = (src_mid_pos - (src_root_pos + src_end_pos) * 0.5).normal()
-
-            # Solve analytical 2-bone IK
-            mid_pos = ik_solv.solve_two_bone_ik(tgt_start_pos, goal_pos, src_pv, upper_len, lower_len)
-
-            # Orient root bone towards mid_pos
-            curr_root_pos, curr_root_rot = get_world_transform(root_bone)
-            aim_dir = (mid_pos - curr_root_pos).normal()
-            rest_dir = (p1 - p0).normal()
-            root_rot = quat_between_vectors(rest_dir, aim_dir) * curr_root_rot
-            set_world_transform(root_bone, quat=root_rot)
-
-            # Orient mid bone towards goal_pos
-            curr_mid_pos, curr_mid_rot = get_world_transform(mid_bone)
-            aim_dir2 = (goal_pos - curr_mid_pos).normal()
+            len1 = (p1 - p0).length()
+            len2 = (p2 - p1).length()
+            rest_dir1 = (p1 - p0).normal()
             rest_dir2 = (p2 - p1).normal()
-            mid_rot = quat_between_vectors(rest_dir2, aim_dir2) * curr_mid_rot
-            set_world_transform(mid_bone, quat=mid_rot)
 
-            # Orient end bone to goal rotation
+            rest_rot1 = self.target_pose_mgr.get_aligned_rest_rotation(root_bone)
+            rest_rot2 = self.target_pose_mgr.get_aligned_rest_rotation(mid_bone)
+
+            # Extract source Pole Vector direction (knee/elbow bend plane)
+            src_root_b = ik_solv.src_chain.bones[0]
+            src_mid_b = ik_solv.src_chain.bones[1]
+            src_end_b = ik_solv.src_chain.bones[2]
+            src_p0, _ = src_pose[src_root_b]
+            src_p1, _ = src_pose[src_mid_b]
+            src_p2, _ = src_pose[src_end_b]
+            src_pv = (src_p1 - (src_p0 + src_p2) * 0.5)
+            if src_pv.length() < 1e-4:
+                src_pv = om.MVector(0, 0, 1)
+            else:
+                src_pv.normalize()
+
+            # Analytical Two-Bone IK solve
+            rot_upper, rot_lower, _ = TwoBoneIKSolver.solve(
+                tgt_start_pos, goal_pos, src_pv,
+                len1, len2,
+                rest_dir1, rest_dir2,
+                rest_rot1, rest_rot2
+            )
+
+            # Apply IK rotations
+            set_world_transform(root_bone, quat=rot_upper)
+            set_world_transform(mid_bone, quat=rot_lower)
             set_world_transform(end_bone, quat=goal_rot)
 
     def bake_animation(self, start_frame, end_frame, step=1, target_controls=None):
@@ -207,8 +222,47 @@ class IKRetargetProcessor(object):
                 cmds.currentTime(frame, e=True)
                 self.retarget_frame()
 
-                # Set keyframes on all target bones
+                # Set clean keyframes
                 for node in keys_target:
                     cmds.setKeyframe(node, time=frame, attribute=['translate', 'rotate'])
         finally:
             cmds.currentTime(orig_time, e=True)
+
+    @classmethod
+    def one_click_retarget(cls, source_root=None, target_root=None, start_frame=None, end_frame=None):
+        """
+        All-in-one entrypoint matching UE5's auto-retarget behavior.
+        Automatically discovers characters, builds chains, aligns A/T-Pose, and bakes animation!
+        """
+        # If roots not passed, auto-detect from selection or scene
+        if not source_root or not target_root:
+            sel = cmds.ls(sl=True, type='joint')
+            if len(sel) >= 2:
+                source_root = sel[0]
+                target_root = sel[1]
+            else:
+                # Find top-level root joints in scene
+                all_joints = cmds.ls(type='joint')
+                roots = [j for j in all_joints if not cmds.listRelatives(j, p=True, type='joint')]
+                if len(roots) >= 2:
+                    source_root = roots[0]
+                    target_root = roots[1]
+                else:
+                    raise RuntimeError("Please select or specify Source Root and Target Root joints.")
+
+        if start_frame is None:
+            start_frame = int(cmds.playbackOptions(q=True, minTime=True))
+        if end_frame is None:
+            end_frame = int(cmds.playbackOptions(q=True, maxTime=True))
+
+        print("[UE5 Retargeter] Initializing processor for: {} -> {}".format(source_root, target_root))
+        processor = cls(source_root, target_root)
+
+        print("[UE5 Retargeter] Auto-aligning base poses (A-to-T Pose match)...")
+        processor.auto_align_base_pose()
+
+        print("[UE5 Retargeter] Baking animation from frame {} to {}...".format(start_frame, end_frame))
+        processor.bake_animation(start_frame, end_frame)
+
+        print("[UE5 Retargeter] One-click retarget completed successfully!")
+        return processor

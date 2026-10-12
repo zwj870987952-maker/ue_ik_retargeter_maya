@@ -110,17 +110,17 @@ def create_test_target_character(prefix="tgt_"):
     r_calf = cmds.joint(n=prefix + "calf_r", p=(-25, 70, -8))
     r_foot = cmds.joint(n=prefix + "foot_r", p=(-25, 8, 8))
 
-    # Left Arm
+    # Left Arm in A-Pose (slanted down ~45 degrees)
     cmds.select(spine3)
     l_arm = cmds.joint(n=prefix + "upperarm_l", p=(35, 215, 0))
-    l_forearm = cmds.joint(n=prefix + "lowerarm_l", p=(75, 215, 0))
-    l_hand = cmds.joint(n=prefix + "hand_l", p=(115, 215, 0))
+    l_forearm = cmds.joint(n=prefix + "lowerarm_l", p=(65, 185, 0))
+    l_hand = cmds.joint(n=prefix + "hand_l", p=(95, 155, 0))
 
-    # Right Arm
+    # Right Arm in A-Pose (slanted down ~45 degrees)
     cmds.select(spine3)
     r_arm = cmds.joint(n=prefix + "upperarm_r", p=(-35, 215, 0))
-    r_forearm = cmds.joint(n=prefix + "lowerarm_r", p=(-75, 215, 0))
-    r_hand = cmds.joint(n=prefix + "hand_r", p=(-115, 215, 0))
+    r_forearm = cmds.joint(n=prefix + "lowerarm_r", p=(-65, 185, 0))
+    r_hand = cmds.joint(n=prefix + "hand_r", p=(-95, 155, 0))
 
     return hips
 
@@ -136,17 +136,8 @@ def run_test():
     tgt_hips = create_test_target_character("tgt_")
 
     cmds.currentTime(0)
-    print(">>> 3. Initializing IKRetargetProcessor at rest frame 0...")
-    processor = IKRetargetProcessor(src_hips, tgt_hips)
-
-    print(">>> 4. Auto-mapping bone chains...")
-    processor.auto_map_chains()
-    print("Mapped chains count:", len(processor.chain_mappings))
-    for m in processor.chain_mappings:
-        print("  - Chain:", m.name, "Src:", m.source_chain.bones, "Tgt:", m.target_chain.bones, "IK:", m.enable_ik)
-
-    print(">>> 5. Baking retargeted animation across frames 1 to 20...")
-    processor.bake_animation(1, 20)
+    print(">>> 3. Testing completely automatic One-Click Retargeting (UE5 experience)...")
+    processor = IKRetargetProcessor.one_click_retarget(src_hips, tgt_hips, 1, 20)
 
     # Verification
     print(">>> 6. Verifying numerical correctness...")
