@@ -162,14 +162,26 @@ class IKRetargetProcessor(object):
         tgt_pelvis_pos, tgt_pelvis_rot = self.pelvis_solver.solve(src_pelvis_pos, src_pelvis_rot)
         set_world_transform(self.target_pelvis, tgt_pelvis_pos, tgt_pelvis_rot)
 
-        # Step 3: Solve FK Chains (Spine, Neck, Head, Base limb rotation)
+        # Calculate pelvis translation delta for InvRootModification (UE5 RunIKRigOp lines 127-133)
+        rest_pelvis_pos = self.target_skeleton.rest_world_pos[self.target_pelvis]
+        pelvis_translation_delta = tgt_pelvis_pos - rest_pelvis_pos
+
+        # Track active target pose dict for FK chain parent queries
+        tgt_pose_dict = {
+            self.target_pelvis: (tgt_pelvis_pos, tgt_pelvis_rot)
+        }
+
+        # Step 3: Solve FK Chains in topological order (Spine -> Neck -> Head -> Clavicles -> Arms -> Legs)
         for fk_solv in self.fk_solvers:
-            chain_rotations = fk_solv.solve(src_pose)
+            chain_rotations = fk_solv.solve(src_pose, target_current_pose_dict=tgt_pose_dict)
             for tgt_joint in fk_solv.tgt_chain.bones:
                 if tgt_joint in chain_rotations:
-                    set_world_transform(tgt_joint, quat=chain_rotations[tgt_joint])
+                    rot = chain_rotations[tgt_joint]
+                    set_world_transform(tgt_joint, quat=rot)
+                    pos, _ = get_world_transform(tgt_joint)
+                    tgt_pose_dict[tgt_joint] = (pos, rot)
 
-        # Step 4: Solve IK Chains (Limbs: LeftLeg, RightLeg, LeftArm, RightArm)
+        # Step 4: Solve IK Chains (Limbs with enable_ik=True, e.g. LeftLeg, RightLeg)
         for ik_solv in self.ik_solvers:
             tgt_chain = ik_solv.tgt_chain
             if len(tgt_chain.bones) < 3:
@@ -184,7 +196,10 @@ class IKRetargetProcessor(object):
             current_mid_pos, current_mid_rot = get_world_transform(mid_bone)
             current_end_pos, current_end_rot = get_world_transform(end_bone)
 
-            goal_pos, goal_rot = ik_solv.calculate_goal_transform(src_pose, tgt_start_pos)
+            # Pass pelvis_translation_delta to enforce InvRootModification (UE 5.8 RunIKRigOp)
+            goal_pos, goal_rot = ik_solv.calculate_goal_transform(
+                src_pose, tgt_start_pos, pelvis_translation_delta=pelvis_translation_delta
+            )
 
             # Target limb lengths from aligned rest pose
             p0 = self.target_pose_mgr.get_aligned_rest_position(root_bone)
@@ -193,23 +208,25 @@ class IKRetargetProcessor(object):
             len1 = (p1 - p0).length()
             len2 = (p2 - p1).length()
 
-            # Source Pole Vector hint (knee/elbow bend plane)
+            # Source Pole Vector hint (knee bend plane matching UE5 AlignPoleVectorOp)
             src_root_b = ik_solv.src_chain.bones[0]
             src_mid_b = ik_solv.src_chain.bones[1]
             src_end_b = ik_solv.src_chain.bones[2]
             src_p0, _ = src_pose[src_root_b]
             src_p1, _ = src_pose[src_mid_b]
             src_p2, _ = src_pose[src_end_b]
-            src_pv_delta = (src_p1 - (src_p0 + src_p2) * 0.5)
 
-            if src_pv_delta.length() > 1e-4:
-                pv_target = tgt_start_pos + src_pv_delta.normal() * len1
+            src_limb_vec = src_p2 - src_p0
+            src_limb_axis = src_limb_vec.normal() if src_limb_vec.length() > 1e-4 else om.MVector(0, -1, 0)
+            src_mid_delta = src_p1 - src_p0
+            src_bend_dir = src_mid_delta - src_limb_axis * (src_mid_delta * src_limb_axis)
+
+            if src_bend_dir.length() > 1e-4:
+                pv_target = tgt_start_pos + src_bend_dir.normal() * len1
             else:
                 pv_target = current_mid_pos
 
-            # End bone orientation blend:
-            # For feet: blend=1.0 to match goal_rot (floor alignment).
-            # For hands: blend=0.0 so wrist naturally follows forearm delta without popping.
+            # End bone orientation blend: 1.0 for legs (floor flat), 0.0 for arms
             is_leg = ("leg" in ik_solv.mapping.name.lower()) or ("foot" in end_bone.lower())
             end_rot_blend = 1.0 if is_leg else 0.0
 

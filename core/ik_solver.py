@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 """
 Robust Two-Bone IK Solver and IK Goal generator.
-Directly implements UE5's FIKChainRetargeter and AnimationCore::SolveTwoBoneIK.
-Preserves full FK axial roll/twist on limbs and ensures natural, un-twisted hands and feet.
+Directly implements UE5's FIKChainRetargeter (IKChainsOp.cpp),
+RunIKRigOp (RunIKRigOp.cpp), and AnimationCore::SolveTwoBoneIK / FLimbSolver (LimbSolver.cpp).
+Implements InvRootModification (ground locking) and VectorPlaneProject pole vector alignment.
 """
 
 import math
 import maya.api.OpenMaya as om
-from .math_utils import quat_between_vectors, slerp
+from .math_utils import quat_between_vectors, slerp, rotate_vector_by_quat
 
 
 class TwoBoneIKSolver(object):
     """
     Analytically solves a 3-joint kinematic chain (Upper -> Lower -> End).
-    Directly ports UE5's AnimationCore::SolveTwoBoneIK (TwoBoneIK.cpp:26-60, 70-185).
-    Preserves full FK axial roll/twist on upper and lower limbs via DeltaRotation multiplication.
+    Directly ports UE5's FLimbSolver::Solve & AnimationCore::SolveTwoBoneIK.
+    Preserves full FK axial roll/twist on upper and lower limbs via DeltaRotation.
     """
 
     @staticmethod
@@ -24,18 +25,18 @@ class TwoBoneIKSolver(object):
         effector_pos, effector_rot,
         joint_target_hint,
         upper_len, lower_len,
-        end_rot_blend=0.0
+        end_rot_blend=1.0
     ):
         """
         Solves Two-Bone IK matching UE5 AnimationCore::SolveTwoBoneIK.
         root_pos, joint_pos, end_pos: MVectors of current FK positions.
         root_rot, joint_rot, end_rot: MQuaternions of current FK rotations.
-        effector_pos: MVector, desired world position of end joint.
+        effector_pos: MVector, desired world position of end joint (IK Goal).
         effector_rot: MQuaternion, desired world rotation of end joint (IK Goal).
-        joint_target_hint: MVector, pole vector target position in world space.
+        joint_target_hint: MVector, pole vector target direction / hint.
         upper_len: float, length of upper limb.
         lower_len: float, length of lower limb.
-        end_rot_blend: float, 0.0 = keep FK relative wrist/ankle orient, 1.0 = match effector_rot.
+        end_rot_blend: float, 1.0 = match effector_rot (feet), 0.0 = track mid bone delta (hands).
         """
         desired_pos = effector_pos
         desired_delta = desired_pos - root_pos
@@ -44,73 +45,65 @@ class TwoBoneIKSolver(object):
 
         if desired_length < 1e-4:
             desired_length = 1e-4
-            desired_dir = om.MVector(1.0, 0.0, 0.0)
+            desired_dir = om.MVector(0.0, -1.0, 0.0)
         else:
             desired_dir = desired_delta.normal()
 
-        # Get joint target (bend plane hint)
-        if joint_target_hint is not None:
-            joint_target_delta = joint_target_hint - root_pos
-        else:
-            joint_target_delta = joint_pos - root_pos
+        # 1. Determine Bend Direction (UE5 VectorPlaneProject logic)
+        # First check current FK bend direction
+        fk_upper_dir = (joint_pos - root_pos).normal() if (joint_pos - root_pos).length() > 1e-4 else desired_dir
+        fk_plane_normal = desired_dir ^ fk_upper_dir
 
-        joint_plane_normal = desired_dir ^ joint_target_delta
-        if joint_plane_normal.length() < 1e-4:
-            # Fallback to current joint pos delta
-            joint_target_delta = joint_pos - root_pos
-            joint_plane_normal = desired_dir ^ joint_target_delta
-
-        if joint_plane_normal.length() < 1e-4:
-            # Limb is completely straight: find orthogonal vector
-            ortho = om.MVector(0.0, 1.0, 0.0) ^ desired_dir
-            if ortho.length() < 1e-3:
-                ortho = om.MVector(1.0, 0.0, 0.0) ^ desired_dir
-            joint_plane_normal = ortho.normal()
-            joint_bend_dir = (joint_plane_normal ^ desired_dir).normal()
-        else:
-            joint_plane_normal.normalize()
-            # Remove component along desired_dir to get pure bend direction
-            joint_bend_dir = joint_target_delta - desired_dir * (joint_target_delta * desired_dir)
-            if joint_bend_dir.length() < 1e-4:
-                joint_bend_dir = (joint_plane_normal ^ desired_dir).normal()
+        if joint_target_hint is not None and (joint_target_hint - root_pos).length() > 1e-4:
+            hint_dir = (joint_target_hint - root_pos).normal()
+            # Project hint onto plane perpendicular to desired_dir
+            proj_hint = hint_dir - desired_dir * (hint_dir * desired_dir)
+            if proj_hint.length() > 1e-4:
+                joint_bend_dir = proj_hint.normal()
             else:
-                joint_bend_dir.normalize()
+                joint_bend_dir = None
+        else:
+            joint_bend_dir = None
 
-        # Clamping reach beyond max limb length (UE5 formula)
-        if desired_length >= max_limb_length:
+        if joint_bend_dir is None:
+            if fk_plane_normal.length() > 1e-4:
+                # Perpendicular to desired_dir in the FK triangle plane
+                joint_bend_dir = (fk_plane_normal.normal() ^ desired_dir).normal()
+            else:
+                # Limb is completely straight: find orthogonal fallback
+                ortho = om.MVector(0.0, 0.0, 1.0) ^ desired_dir
+                if ortho.length() < 1e-3:
+                    ortho = om.MVector(1.0, 0.0, 0.0) ^ desired_dir
+                joint_bend_dir = ortho.normal()
+
+        # 2. Clamping reach beyond max limb length (UE5 formula)
+        if desired_length >= max_limb_length * 0.9999:
             out_end_pos = root_pos + desired_dir * max_limb_length
             out_joint_pos = root_pos + desired_dir * upper_len
         else:
             two_ab = 2.0 * upper_len * desired_length
             cos_angle = ((upper_len * upper_len) + (desired_length * desired_length) - (lower_len * lower_len)) / two_ab if two_ab > 1e-6 else 0.0
             cos_angle = max(-1.0, min(1.0, cos_angle))
-            b_reverse = (cos_angle < 0.0)
             angle = math.acos(cos_angle)
 
+            proj_dist = upper_len * cos_angle
             joint_line_dist = upper_len * math.sin(angle)
-            proj_joint_dist_sqr = (upper_len * upper_len) - (joint_line_dist * joint_line_dist)
-            proj_joint_dist = math.sqrt(max(0.0, proj_joint_dist_sqr))
-            if b_reverse:
-                proj_joint_dist = -proj_joint_dist
 
-            out_joint_pos = root_pos + (desired_dir * proj_joint_dist) + (joint_bend_dir * joint_line_dist)
+            out_joint_pos = root_pos + (desired_dir * proj_dist) + (joint_bend_dir * joint_line_dist)
             out_end_pos = desired_pos
 
-        # UE5 TwoBoneIK Delta Rotations (Lines 26-53):
-        # Upper bone
-        old_dir_upper = (joint_pos - root_pos).normal()
+        # 3. UE5 Delta Rotations for Upper and Middle bones
+        old_dir_upper = (joint_pos - root_pos).normal() if (joint_pos - root_pos).length() > 1e-4 else desired_dir
         new_dir_upper = (out_joint_pos - root_pos).normal()
         delta_rot_upper = quat_between_vectors(old_dir_upper, new_dir_upper)
         solved_root_rot = (delta_rot_upper * root_rot).normal()
 
-        # Middle bone
-        old_dir_mid = (end_pos - joint_pos).normal()
+        old_dir_mid = (end_pos - joint_pos).normal() if (end_pos - joint_pos).length() > 1e-4 else desired_dir
         new_dir_mid = (out_end_pos - out_joint_pos).normal()
         delta_rot_mid = quat_between_vectors(old_dir_mid, new_dir_mid)
         solved_joint_rot = (delta_rot_mid * joint_rot).normal()
 
-        # End bone (Hand / Foot):
-        # In FK, end bone rotation naturally tracks delta_rot_mid
+        # 4. End bone (Foot / Hand) rotation
         fk_tracked_end_rot = (delta_rot_mid * end_rot).normal()
         if effector_rot is not None and end_rot_blend > 1e-4:
             solved_end_rot = slerp(fk_tracked_end_rot, effector_rot, end_rot_blend).normal()
@@ -124,7 +117,7 @@ class IKChainSolver(object):
     """
     Computes IK goal positions based on source limb normalized extension,
     and solves target limb joint rotations to hit the goal precisely.
-    Matches UE5's FIKChainRetargeter (IKChainsOp.cpp).
+    Implements UE5's FIKChainRetargeter (IKChainsOp.cpp) and InvRootModification.
     """
 
     def __init__(self, mapping, target_pose_mgr=None):
@@ -152,10 +145,12 @@ class IKChainSolver(object):
 
         self.tgt_initial_limb_length = max(1e-4, (tgt_end_pos - tgt_start_pos).length())
 
-    def calculate_goal_transform(self, source_current_pose_dict, target_current_start_pos):
+    def calculate_goal_transform(self, source_current_pose_dict, target_current_start_pos, pelvis_translation_delta=None):
         """
         Calculates world-space position and rotation for the target IK goal.
-        Matches UE5's FIKChainRetargeter::CalculateGoalPosition & CalculateGoalRotation.
+        Matches UE5's FIKChainRetargeter & RunIKRigOp lines 120-136:
+        - Normalized limb extension ratio
+        - InvRootModification (pelvis vertical movement isolation for ground pinning)
         """
         src_start_bone = self.src_chain.start_bone
         src_end_bone = self.src_chain.end_bone
@@ -164,16 +159,28 @@ class IKChainSolver(object):
         src_curr_start_pos, _ = source_current_pose_dict[src_start_bone]
         src_curr_end_pos, src_curr_end_rot = source_current_pose_dict[src_end_bone]
 
-        # Normalized Extension Ratio (UE5 Formula from IKChainsOp.cpp)
+        # 1. Normalized Extension Ratio (UE5 IKChainsOp.cpp lines 120-126)
         src_limb_vec = src_curr_end_pos - src_curr_start_pos
         src_curr_length = src_limb_vec.length()
         src_dir = src_limb_vec.normal() if src_curr_length > 1e-4 else om.MVector(0, -1, 0)
 
         normalized_extension = src_curr_length / self.src_initial_limb_length
-        # Target goal position = target_start + src_dir * (normalized_ext * tgt_rest_length)
-        goal_pos = target_current_start_pos + (src_dir * (normalized_extension * self.tgt_initial_limb_length))
+        src_end_dir_normalized = src_dir * normalized_extension
 
-        # Goal Rotation:
+        # 2. InvRootModification (UE5 RunIKRigOp.cpp lines 127-133)
+        # In UE (Z is Up): AffectIKHorizontal=1.0, AffectIKVertical=0.0 -> InvAffectIK=(0, 0, 1)
+        # In Maya (Y is Up): AffectIKHorizontal=1.0 (X,Z), AffectIKVertical=0.0 (Y) -> InvAffectIK=(0, 1, 0)
+        inv_root_modification = om.MVector(0, 0, 0)
+        if pelvis_translation_delta is not None:
+            # Only isolate vertical pelvis movement from pulling IK goals
+            inv_root_modification = om.MVector(0.0, pelvis_translation_delta.y, 0.0)
+
+        adjusted_target_start = target_current_start_pos - inv_root_modification
+
+        # Goal Position = AdjustedStart + (NormalizedDirection * InitialTargetLength)
+        goal_pos = adjusted_target_start + (src_end_dir_normalized * self.tgt_initial_limb_length)
+
+        # 3. Goal Rotation (UE5 IKChainsOp.cpp lines 89-93)
         # rot_delta = CurrentSourceEndRotation * InitialSourceEndRotation^-1
         # goal_rot = rot_delta * InitialTargetEndRotation
         src_init_end_rot = self.src_chain.skeleton.rest_world_rot[src_end_bone]

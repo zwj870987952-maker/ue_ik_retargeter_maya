@@ -136,7 +136,7 @@ class ChainMapping(object):
         self.translation_mode = "None"      # "None", "GloballyScaled", "StretchBoneLength"
 
 
-# Pre-defined templates for automatic chain detection
+# Pre-defined templates for automatic chain detection (matching UE5 IK Rig standards)
 CHAIN_PATTERNS = {
     'Pelvis': {
         'patterns': ['*pelvis*', '*hips*', '*hip*', '*root_joint*']
@@ -147,26 +147,37 @@ CHAIN_PATTERNS = {
     },
     'Head': {
         'start': ['*neck*', '*neck_01*'],
-        'end': ['*head*']
+        'end': ['*head*'],
+        'is_limb': False
+    },
+    'LeftClavicle': {
+        'start': ['*clavicle_l*', '*leftshoulder*', '*l_shoulder*', '*l_clavicle*'],
+        'end': ['*clavicle_l*', '*leftshoulder*', '*l_shoulder*', '*l_clavicle*'],
+        'is_limb': False
+    },
+    'RightClavicle': {
+        'start': ['*clavicle_r*', '*rightshoulder*', '*r_shoulder*', '*r_clavicle*'],
+        'end': ['*clavicle_r*', '*rightshoulder*', '*r_shoulder*', '*r_clavicle*'],
+        'is_limb': False
     },
     'LeftArm': {
         'start': ['*upperarm_l*', '*leftarm*', '*l_arm*', '*arm_l*', '*l_upperarm*'],
         'end': ['*hand_l*', '*lefthand*', '*l_hand*'],
-        'is_limb': True
+        'is_limb': False  # UE5 default: Arms use high-fidelity FK Chains with interpolated rotations
     },
     'RightArm': {
         'start': ['*upperarm_r*', '*rightarm*', '*r_arm*', '*arm_r*', '*r_upperarm*'],
         'end': ['*hand_r*', '*righthand*', '*r_hand*'],
-        'is_limb': True
+        'is_limb': False  # UE5 default: Arms use high-fidelity FK Chains with interpolated rotations
     },
     'LeftLeg': {
         'start': ['*thigh_l*', '*leftupleg*', '*l_upleg*', '*leftleg*', '*l_thigh*'],
         'end': ['*foot_l*', '*leftfoot*', '*l_foot*'],
-        'is_limb': True
+        'is_limb': True   # UE5 default: Legs use TwoBoneIK with floor grounding
     },
     'RightLeg': {
         'start': ['*thigh_r*', '*rightupleg*', '*r_upleg*', '*rightleg*', '*r_thigh*'],
         'end': ['*foot_r*', '*rightfoot*', '*r_foot*'],
-        'is_limb': True
+        'is_limb': True   # UE5 default: Legs use TwoBoneIK with floor grounding
     }
 }

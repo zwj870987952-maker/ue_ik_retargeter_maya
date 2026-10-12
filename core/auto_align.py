@@ -34,18 +34,24 @@ class AutoPoseAligner(object):
             src_chain = mapping.source_chain
             tgt_chain = mapping.target_chain
 
-            if not src_chain.bones or not tgt_chain.bones:
+            if len(src_chain.bones) < 2 or len(tgt_chain.bones) < 2:
                 continue
 
             # Calculate overall rest chain direction vector for source and target
             # Matches UE5: GetChainDirection(ChainName) = (ChainEnd - ChainStart).GetSafeNormal()
             src_start_pos = src_skel.rest_world_pos[src_chain.bones[0]]
             src_end_pos = src_skel.rest_world_pos[src_chain.bones[-1]]
-            src_dir = (src_end_pos - src_start_pos).normal()
+            src_delta = src_end_pos - src_start_pos
+            if src_delta.length() < 1e-4:
+                continue
+            src_dir = src_delta.normal()
 
             tgt_start_pos = tgt_skel.rest_world_pos[tgt_chain.bones[0]]
             tgt_end_pos = tgt_skel.rest_world_pos[tgt_chain.bones[-1]]
-            tgt_dir = (tgt_end_pos - tgt_start_pos).normal()
+            tgt_delta = tgt_end_pos - tgt_start_pos
+            if tgt_delta.length() < 1e-4:
+                continue
+            tgt_dir = tgt_delta.normal()
 
             # Find world rotation offset that rotates target chain direction to source chain direction
             # Matches UE5: FQuat WorldRotationOffset = FQuat::FindBetweenNormals(DirectionToAlign, DirectionToMatch);
