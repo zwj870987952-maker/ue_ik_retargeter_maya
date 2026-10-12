@@ -25,7 +25,7 @@ class RetargetSkeleton(object):
         self.rest_local_rot = {}
 
         self._build_hierarchy()
-        self.cache_rest_pose()
+        self.cache_reference_tpose()
 
     def _build_hierarchy(self):
         """Discovers all joints under root_joint and builds indexing hierarchy."""
@@ -43,6 +43,28 @@ class RetargetSkeleton(object):
                 self.parent_indices[idx] = self.joint_indices[parent[0]]
             else:
                 self.parent_indices[idx] = -1
+
+    def cache_reference_tpose(self):
+        """
+        Captures the pristine zero-rotation reference pose (T-pose) by temporarily
+        disconnecting driving anim curves, caching rest transforms, and reconnecting.
+        """
+        connections = []
+        for j_name in self.joint_names:
+            for attr in ['rotateX', 'rotateY', 'rotateZ']:
+                plug = '{}.{}'.format(j_name, attr)
+                inputs = cmds.listConnections(plug, source=True, destination=False, plugs=True) or []
+                if inputs:
+                    cmds.disconnectAttr(inputs[0], plug)
+                    connections.append((inputs[0], plug))
+                cmds.setAttr(plug, 0.0)
+
+        # Cache the pristine rest pose
+        self.cache_rest_pose()
+
+        # Restore animation connections
+        for src, dst in connections:
+            cmds.connectAttr(src, dst)
 
     def cache_rest_pose(self):
         """
