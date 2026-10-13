@@ -240,15 +240,26 @@ class IKRetargetProcessor(object):
                     pos, _ = get_world_transform(tgt_joint)
                     tgt_pose_dict[tgt_joint] = (pos, rot)
 
+        def _pick_triad(chain_obj):
+            b_list = chain_obj.bones
+            if len(b_list) == 3:
+                return b_list[0], b_list[1], b_list[2]
+            b_u, b_e = b_list[0], b_list[-1]
+            cands = [
+                b for b in b_list[1:-1]
+                if not any(t in chain_obj.skeleton.get_clean_name(b).lower() for t in ("twist", "roll", "proc", "helper", "correct"))
+            ] or b_list[1:-1]
+            mid_pt = (chain_obj.skeleton.rest_world_pos[b_u] + chain_obj.skeleton.rest_world_pos[b_e]) * 0.5
+            b_m = min(cands, key=lambda b: (chain_obj.skeleton.rest_world_pos[b] - mid_pt).length())
+            return b_u, b_m, b_e
+
         # Step 3: IKChainsOp + RunIKRigOp + AlignPoleVectorOp
         for ik_solv in self.ik_solvers:
             tgt_chain = ik_solv.tgt_chain
-            if len(tgt_chain.bones) < 3:
+            if len(tgt_chain.bones) < 3 or len(ik_solv.src_chain.bones) < 3:
                 continue
 
-            root_bone = tgt_chain.bones[0]
-            mid_bone = tgt_chain.bones[1]
-            end_bone = tgt_chain.bones[2]
+            root_bone, mid_bone, end_bone = _pick_triad(tgt_chain)
 
             tgt_start_pos, current_root_rot = get_world_transform(root_bone)
             current_mid_pos, current_mid_rot = get_world_transform(mid_bone)
@@ -264,9 +275,7 @@ class IKRetargetProcessor(object):
             len1 = (p1 - p0).length()
             len2 = (p2 - p1).length()
 
-            src_root_b = ik_solv.src_chain.bones[0]
-            src_mid_b = ik_solv.src_chain.bones[1]
-            src_end_b = ik_solv.src_chain.bones[2]
+            src_root_b, src_mid_b, src_end_b = _pick_triad(ik_solv.src_chain)
             src_p0, _ = src_pose[src_root_b]
             src_p1, _ = src_pose[src_mid_b]
             src_p2, _ = src_pose[src_end_b]

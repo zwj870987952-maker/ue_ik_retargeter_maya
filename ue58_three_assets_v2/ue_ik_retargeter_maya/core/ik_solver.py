@@ -82,17 +82,54 @@ class TwoBoneIKSolver(object):
             out_joint_pos = root_pos + (desired_dir * proj_dist) + (joint_bend_dir * joint_line_dist)
             out_end_pos = desired_pos
 
-        # 3. UE 5.8 Delta Rotations for Upper and Middle bones (row-vector: rot * delta_rot)
+        # 3. UE 5.8 Plane-Aligned Delta Rotations for Upper and Middle bones:
+        #    Upper bone both aims at out_joint_pos AND rolls around new_dir_upper so the
+        #    initial bend-plane normal aligns with the solved triangle normal (root, out_joint, out_end).
+        #    This guarantees the middle joint (elbow/knee) bends purely around its hinge axis with zero twist!
         old_dir_upper = (joint_pos - root_pos).normal() if (joint_pos - root_pos).length() > 1e-4 else desired_dir
+        raw_old_dir_mid = (end_pos - joint_pos).normal() if (end_pos - joint_pos).length() > 1e-4 else desired_dir
         new_dir_upper = (out_joint_pos - root_pos).normal()
-        delta_rot_upper = quat_between_vectors(old_dir_upper, new_dir_upper)
+        new_dir_mid = (out_end_pos - out_joint_pos).normal()
+
+        # Construct initial bend direction old_bend_dir consistently with joint_bend_dir
+        # so that when desired_pos == end_pos, old_bend_dir == joint_bend_dir and q_roll == Identity!
+        old_chord = end_pos - root_pos
+        old_chord_dir = old_chord.normal() if old_chord.length() > 1e-4 else old_dir_upper
+        if joint_target_hint is not None and (joint_target_hint - root_pos).length() > 1e-4:
+            hint_dir = (joint_target_hint - root_pos).normal()
+            proj_h = hint_dir - old_chord_dir * (hint_dir * old_chord_dir)
+            old_bend_dir = proj_h.normal() if proj_h.length() > 1e-4 else joint_bend_dir
+        else:
+            old_mid_vec = joint_pos - root_pos
+            old_perp = old_mid_vec - old_chord_dir * (old_mid_vec * old_chord_dir)
+            old_bend_dir = old_perp.normal() if old_perp.length() > 1e-4 else joint_bend_dir
+
+        # Both n0 = (old_chord_dir ^ old_bend_dir) and n1 = (desired_dir ^ joint_bend_dir)
+        # use the exact same cross-product convention and are strictly orthogonal to
+        # old_dir_upper and new_dir_upper respectively!
+        n0_raw = old_chord_dir ^ old_bend_dir
+        n1_raw = desired_dir ^ joint_bend_dir
+
+        q_aim = quat_between_vectors(old_dir_upper, new_dir_upper)
+        if n0_raw.length() > 1e-4 and n1_raw.length() > 1e-4:
+            n0 = n0_raw.normal()
+            n1 = n1_raw.normal()
+            n0_carried = rotate_vector_by_quat(n0, q_aim)
+            n0_ortho = n0_carried - new_dir_upper * (n0_carried * new_dir_upper)
+            n1_ortho = n1 - new_dir_upper * (n1 * new_dir_upper)
+            if n0_ortho.length() > 1e-4 and n1_ortho.length() > 1e-4:
+                q_roll = quat_between_vectors(n0_ortho.normal(), n1_ortho.normal())
+            else:
+                q_roll = om.MQuaternion.kIdentity
+        else:
+            q_roll = om.MQuaternion.kIdentity
+
+        delta_rot_upper = (q_aim * q_roll).normal()
         solved_root_rot = (root_rot * delta_rot_upper).normal()
 
         # Because Middle joint is a child of Upper joint, rotating Upper by delta_rot_upper
         # rotates Middle's world orientation and its limb vector by delta_rot_upper first:
-        raw_old_dir_mid = (end_pos - joint_pos).normal() if (end_pos - joint_pos).length() > 1e-4 else desired_dir
         old_dir_mid = rotate_vector_by_quat(raw_old_dir_mid, delta_rot_upper).normal()
-        new_dir_mid = (out_end_pos - out_joint_pos).normal()
         delta_rot_mid = quat_between_vectors(old_dir_mid, new_dir_mid)
         joint_rot_after_upper = (joint_rot * delta_rot_upper).normal()
         solved_joint_rot = (joint_rot_after_upper * delta_rot_mid).normal()
