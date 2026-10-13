@@ -2,8 +2,10 @@
 """
 PySide2 / PySide6 UI for Maya IK Retargeter.
 Compatible with Maya 2024 (PySide2) and Maya 2025+ (PySide6).
-Supports both the Two-Step Bind-Pose Cache workflow (100% immune to animation pollution)
-and the UE5 One-Click automatic retargeting experience.
+Features:
+- Parented to Maya's main window so it never gets hidden behind Maya when clicking viewport.
+- Built-in One-Click Hot Reload button for instant code updates without restarting Maya.
+- Supports the Two-Step Bind-Pose Cache workflow (100% immune to animation pollution).
 """
 
 import os
@@ -18,20 +20,53 @@ from ..core.processor import IKRetargetProcessor
 from ..core.retarget_cache import RetargetCache
 from ..rig_driver.driver import ControlRigDriver
 
+WINDOW_OBJECT_NAME = "UE5IKRetargeterMayaWindow"
+
+
+def get_maya_main_window():
+    """
+    Retrieves Maya's main QMainWindow widget instance.
+    Parenting the tool dialog to Maya's main window ensures it always stays
+    on top of Maya even when clicking in the 3D Viewport or Outliner.
+    """
+    try:
+        import maya.OpenMayaUI as omui
+        main_window_ptr = omui.MQtUtil.mainWindow()
+        if main_window_ptr is not None:
+            try:
+                from shiboken2 import wrapInstance
+            except ImportError:
+                from shiboken6 import wrapInstance
+            return wrapInstance(int(main_window_ptr), QtWidgets.QWidget)
+    except Exception:
+        pass
+
+    app = QtWidgets.QApplication.instance()
+    if app:
+        for widget in app.topLevelWidgets():
+            if widget.objectName() == "MayaWindow":
+                return widget
+    return None
+
 
 class RetargeterWindow(QtWidgets.QDialog):
     """
     Main user interface for UE5-style animation retargeting inside Maya.
-    Supports generating a clean bind-pose cache from A and B skeletons first,
-    then applying animations to A and retargeting to B without pose pollution.
     """
 
     WINDOW_TITLE = "UE5 IK Retargeter for Maya"
 
     def __init__(self, parent=None):
+        if parent is None:
+            parent = get_maya_main_window()
         super(RetargeterWindow, self).__init__(parent)
+
+        self.setObjectName(WINDOW_OBJECT_NAME)
         self.setWindowTitle(self.WINDOW_TITLE)
-        self.resize(720, 700)
+        # Ensure it behaves as a floating tool window owned by Maya (never hidden behind Maya)
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.Window)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.resize(730, 710)
 
         self.processor = None
         self.rig_driver = None
@@ -44,15 +79,26 @@ class RetargeterWindow(QtWidgets.QDialog):
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setSpacing(10)
 
-        # Title Banner
+        # Header Row with Title + Hot Reload Button
+        header_bar = QtWidgets.QHBoxLayout()
         banner = QtWidgets.QLabel("Unreal Engine 5 IK Retargeter for Maya")
-        banner.setStyleSheet("font-size: 16px; font-weight: bold; color: #5dade2; margin-bottom: 2px;")
-        main_layout.addWidget(banner)
+        banner.setStyleSheet("font-size: 16px; font-weight: bold; color: #5dade2;")
+        header_bar.addWidget(banner)
+        header_bar.addStretch()
+
+        hot_reload_btn = QtWidgets.QPushButton("🔄 热更新插件 (Hot Reload)")
+        hot_reload_btn.setToolTip("重新加载所有插件 Python 模块并刷新界面，无需重启 Maya")
+        hot_reload_btn.setStyleSheet(
+            "background-color: #34495e; color: #ecf0f1; font-weight: bold; padding: 5px 12px; border-radius: 4px;"
+        )
+        hot_reload_btn.clicked.connect(self._on_hot_reload)
+        header_bar.addWidget(hot_reload_btn)
+        main_layout.addLayout(header_bar)
 
         subtitle = QtWidgets.QLabel(
             "推荐流程：① 导入无动画的 A 和 B 骨骼生成绑定基准缓存 ➔ ② 为 A 挂载动画 ➔ ③ 一键将 A 的动画重定向给 B"
         )
-        subtitle.setStyleSheet("color: #aaaaaa; margin-bottom: 6px;")
+        subtitle.setStyleSheet("color: #aaaaaa; margin-bottom: 4px;")
         main_layout.addWidget(subtitle)
 
         # --- 1. Character Selection ---
@@ -184,6 +230,11 @@ class RetargeterWindow(QtWidgets.QDialog):
 
         main_layout.addWidget(self.adv_group)
 
+    def _on_hot_reload(self):
+        """Hot-reloads all plugin modules and re-opens the updated UI."""
+        import ue_ik_retargeter_maya
+        ue_ik_retargeter_maya.launch(hot_reload=True)
+
     def _init_defaults(self):
         self._sync_timeline_range()
         self._auto_detect_skeletons()
@@ -290,7 +341,6 @@ class RetargeterWindow(QtWidgets.QDialog):
             self.rig_driver = ControlRigDriver(self.processor)
             self._refresh_table()
 
-        # If we have clean cached bind-pose data (in memory or on disk), enforce it so animated A never pollutes rest pose
         if apply_cache:
             cache_path = self.cache_path_edit.text().strip()
             if self.cached_bind_data is not None:
@@ -300,7 +350,6 @@ class RetargeterWindow(QtWidgets.QDialog):
                 self.cache_status_label.setText("✅ 已自动应用绑定姿态缓存：{}".format(cache_path))
                 self.cache_status_label.setStyleSheet("color: #2ecc71; font-weight: bold; font-size: 12px;")
 
-        # Update solver parameters
         self.processor.pelvis_solver.scale_vertical = self.height_slider.value()
         self.processor.pelvis_solver.floor_constraint_weight = self.floor_slider.value()
         return self.processor
@@ -351,14 +400,34 @@ class RetargeterWindow(QtWidgets.QDialog):
         )
 
 
-def show_ui():
-    """Opens or raises the Retargeter UI window in Maya."""
+def _close_existing_windows():
+    """Closes any existing RetargeterWindow instances (including across hot-reloads)."""
     global _retargeter_win_instance
     try:
-        _retargeter_win_instance.close()
-        _retargeter_win_instance.deleteLater()
+        if '_retargeter_win_instance' in globals() and _retargeter_win_instance is not None:
+            _retargeter_win_instance.close()
+            _retargeter_win_instance.deleteLater()
+            _retargeter_win_instance = None
     except Exception:
         pass
-    _retargeter_win_instance = RetargeterWindow()
+
+    app = QtWidgets.QApplication.instance()
+    if app:
+        for widget in list(app.allWidgets()):
+            try:
+                if widget.objectName() == WINDOW_OBJECT_NAME:
+                    widget.close()
+                    widget.deleteLater()
+            except Exception:
+                pass
+
+
+def show_ui():
+    """Opens or raises the Retargeter UI window on top of Maya's main window."""
+    global _retargeter_win_instance
+    _close_existing_windows()
+    _retargeter_win_instance = RetargeterWindow(parent=get_maya_main_window())
     _retargeter_win_instance.show()
+    _retargeter_win_instance.raise_()
+    _retargeter_win_instance.activateWindow()
     return _retargeter_win_instance
