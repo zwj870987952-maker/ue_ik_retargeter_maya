@@ -18,6 +18,7 @@ SUBMODULES_ORDER = [
     "ue_ik_retargeter_maya.core.pelvis_solver",
     "ue_ik_retargeter_maya.core.fk_solver",
     "ue_ik_retargeter_maya.core.ik_solver",
+    "ue_ik_retargeter_maya.core.fbik_solver",
     "ue_ik_retargeter_maya.core.auto_align",
     "ue_ik_retargeter_maya.core.retarget_assets",
     "ue_ik_retargeter_maya.core.retarget_cache",

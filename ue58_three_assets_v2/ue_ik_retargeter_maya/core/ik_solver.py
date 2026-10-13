@@ -88,13 +88,17 @@ class TwoBoneIKSolver(object):
         delta_rot_upper = quat_between_vectors(old_dir_upper, new_dir_upper)
         solved_root_rot = (root_rot * delta_rot_upper).normal()
 
-        old_dir_mid = (end_pos - joint_pos).normal() if (end_pos - joint_pos).length() > 1e-4 else desired_dir
+        # Because Middle joint is a child of Upper joint, rotating Upper by delta_rot_upper
+        # rotates Middle's world orientation and its limb vector by delta_rot_upper first:
+        raw_old_dir_mid = (end_pos - joint_pos).normal() if (end_pos - joint_pos).length() > 1e-4 else desired_dir
+        old_dir_mid = rotate_vector_by_quat(raw_old_dir_mid, delta_rot_upper).normal()
         new_dir_mid = (out_end_pos - out_joint_pos).normal()
         delta_rot_mid = quat_between_vectors(old_dir_mid, new_dir_mid)
-        solved_joint_rot = (joint_rot * delta_rot_mid).normal()
+        joint_rot_after_upper = (joint_rot * delta_rot_upper).normal()
+        solved_joint_rot = (joint_rot_after_upper * delta_rot_mid).normal()
 
         # 4. End bone (Foot / Hand) rotation
-        fk_tracked_end_rot = (end_rot * delta_rot_mid).normal()
+        fk_tracked_end_rot = (end_rot * delta_rot_upper * delta_rot_mid).normal()
         if effector_rot is not None and end_rot_blend > 1e-4:
             solved_end_rot = slerp(fk_tracked_end_rot, effector_rot, end_rot_blend).normal()
         else:

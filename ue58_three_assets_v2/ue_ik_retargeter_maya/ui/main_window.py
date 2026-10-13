@@ -148,13 +148,18 @@ class RetargeterWindow(QtWidgets.QDialog):
 
         btn_row = QtWidgets.QHBoxLayout()
         self.build_cache_btn = QtWidgets.QPushButton(
-            "📌 1. 在当前场景生成 UE5.8 三大资产 & 对齐姿态 (Generate 3 Assets in Scene)"
+            "📌 1. 生成 UE5.8 三大资产 + 实时全身IK (Generate 3 Assets & Live FBIK)"
         )
         self.build_cache_btn.setStyleSheet(
             "background-color: #2e7d32; color: white; font-weight: bold; padding: 8px; border-radius: 5px;"
         )
         self.build_cache_btn.clicked.connect(self._on_build_and_save_cache)
         btn_row.addWidget(self.build_cache_btn)
+
+        self.reset_fbik_btn = QtWidgets.QPushButton("🎯 重置全身IK定位器")
+        self.reset_fbik_btn.setStyleSheet("padding: 8px;")
+        self.reset_fbik_btn.clicked.connect(self._on_reset_fbik_goals)
+        btn_row.addWidget(self.reset_fbik_btn)
 
         self.reset_pose_btn = QtWidgets.QPushButton("↩ 恢复 B 原始绑定姿态")
         self.reset_pose_btn.setStyleSheet("padding: 8px;")
@@ -344,19 +349,58 @@ class RetargeterWindow(QtWidgets.QDialog):
             )
         )
 
+    def _on_reset_fbik_goals(self):
+        """Resets all IK Goal locators back to their initial base positions and re-evaluates FBIK."""
+        if not self.processor:
+            return
+        from ..core.math_utils import set_world_transform
+        for fbik_solv in (
+            getattr(self.processor, "source_fbik_solver", None),
+            getattr(self.processor, "target_fbik_solver", None),
+        ):
+            if fbik_solv is not None:
+                fbik_solv._is_solving = True
+                try:
+                    if fbik_solv.pelvis_locator_dag and cmds.objExists(fbik_solv.pelvis_locator_dag):
+                        set_world_transform(fbik_solv.pelvis_locator_dag, fbik_solv.pelvis_init_pos, fbik_solv.pelvis_init_rot)
+                    for g_info in fbik_solv.goal_locators.values():
+                        loc_dag = g_info["locator_dag"]
+                        if cmds.objExists(loc_dag):
+                            set_world_transform(loc_dag, g_info["init_pos"], g_info["init_rot"])
+                finally:
+                    fbik_solv._is_solving = False
+                fbik_solv.solve_from_scene_goals()
+
     def _on_reset_target_bind_pose(self):
         """Resets Target B in the viewport back to its original unaligned bind pose."""
         if self.processor:
-            for idx, j in enumerate(self.processor.target_skeleton.joint_names):
-                from ..core.math_utils import set_world_transform
-                if idx == 0:
-                    set_world_transform(
-                        j,
-                        self.processor.target_skeleton.rest_world_pos[j],
-                        self.processor.target_skeleton.rest_world_rot[j]
-                    )
-                else:
-                    set_world_transform(j, quat=self.processor.target_skeleton.rest_world_rot[j])
+            from ..core.math_utils import set_world_transform, get_world_transform
+            fbik_solv = getattr(self.processor, "target_fbik_solver", None)
+            if fbik_solv:
+                fbik_solv._is_solving = True
+            try:
+                for idx, j in enumerate(self.processor.target_skeleton.joint_names):
+                    if idx == 0:
+                        set_world_transform(
+                            j,
+                            self.processor.target_skeleton.rest_world_pos[j],
+                            self.processor.target_skeleton.rest_world_rot[j]
+                        )
+                    else:
+                        set_world_transform(j, quat=self.processor.target_skeleton.rest_world_rot[j])
+                if fbik_solv:
+                    if fbik_solv.pelvis_locator_dag and cmds.objExists(fbik_solv.pelvis_locator_dag):
+                        p_pos, p_rot = get_world_transform(fbik_solv.pelvis_dag)
+                        set_world_transform(fbik_solv.pelvis_locator_dag, p_pos, p_rot)
+                    for g_info in fbik_solv.goal_locators.values():
+                        loc_dag = g_info["locator_dag"]
+                        b_dag = g_info["bone_dag"]
+                        if cmds.objExists(loc_dag) and cmds.objExists(b_dag):
+                            b_pos, b_rot = get_world_transform(b_dag)
+                            set_world_transform(loc_dag, b_pos, b_rot)
+            finally:
+                if fbik_solv:
+                    fbik_solv._is_solving = False
 
     def _on_load_cache(self):
         """Loads an existing .retarget.json bind-pose cache file."""
