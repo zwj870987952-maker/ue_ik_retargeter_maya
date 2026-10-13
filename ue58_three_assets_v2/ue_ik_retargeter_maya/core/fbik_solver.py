@@ -233,6 +233,8 @@ class FullBodyIKSolver(object):
             "bone_dag": bone_dag,
             "init_pos": om.MVector(pos),
             "init_rot": om.MQuaternion(rot).normal(),
+            "last_synced_pos": om.MVector(pos),
+            "last_synced_rot": om.MQuaternion(rot).normal(),
         }
 
     def register_pelvis_locator(self, locator_dag):
@@ -241,6 +243,32 @@ class FullBodyIKSolver(object):
         self.pelvis_locator_dag = locator_dag
         self.pelvis_init_pos = om.MVector(pos)
         self.pelvis_init_rot = om.MQuaternion(rot).normal()
+        self.pelvis_last_synced_pos = om.MVector(pos)
+        self.pelvis_last_synced_rot = om.MQuaternion(rot).normal()
+
+    def sync_locators_to_skeleton(self):
+        """
+        Syncs all in-scene IK Goal locators to match current skeleton joint transforms
+        without triggering an interactive FBIK solve.
+        """
+        self._is_solving = True
+        self._is_retarget_synced = True
+        try:
+            if self.pelvis_locator_dag and cmds.objExists(self.pelvis_locator_dag) and cmds.objExists(self.pelvis_dag):
+                p_pos, p_rot = get_world_transform(self.pelvis_dag)
+                set_world_transform(self.pelvis_locator_dag, p_pos, p_rot)
+                self.pelvis_last_synced_pos = om.MVector(p_pos)
+                self.pelvis_last_synced_rot = om.MQuaternion(p_rot).normal()
+            for g_info in self.goal_locators.values():
+                loc_dag = g_info["locator_dag"]
+                b_dag = g_info["bone_dag"]
+                if cmds.objExists(loc_dag) and cmds.objExists(b_dag):
+                    b_pos, b_rot = get_world_transform(b_dag)
+                    set_world_transform(loc_dag, b_pos, b_rot)
+                    g_info["last_synced_pos"] = om.MVector(b_pos)
+                    g_info["last_synced_rot"] = om.MQuaternion(b_rot).normal()
+        finally:
+            self._is_solving = False
 
     def _propagate_hierarchy(self, world_pos, world_rot, local_rot_deltas=None):
         """
@@ -301,6 +329,29 @@ class FullBodyIKSolver(object):
 
         if not curr_goals:
             return
+
+        # Guard against unwanted solve when locators were synced by animation retargeting
+        if getattr(self, "_is_retarget_synced", False):
+            any_user_dragged = False
+            if self.pelvis_locator_dag and cmds.objExists(self.pelvis_locator_dag):
+                p_pos, p_rot = get_world_transform(self.pelvis_locator_dag)
+                last_p = getattr(self, "pelvis_last_synced_pos", self.pelvis_init_pos)
+                if (p_pos - last_p).length() > 1e-3:
+                    any_user_dragged = True
+            if not any_user_dragged:
+                for g_name, (b_pos, b_rot, _, _) in curr_goals.items():
+                    g_info = self.goal_locators[g_name]
+                    last_pos = g_info.get("last_synced_pos", g_info["init_pos"])
+                    if (b_pos - last_pos).length() > 1e-3:
+                        any_user_dragged = True
+                        break
+                    dq_synced = (g_info.get("last_synced_rot", g_info["init_rot"]).inverse() * b_rot).normal()
+                    if abs(dq_synced.w) < 0.99999:
+                        any_user_dragged = True
+                        break
+            if not any_user_dragged:
+                return
+            self._is_retarget_synced = False
 
         # Working pose dictionaries initialized to base pose
         world_pos = {dag: om.MVector(p) for dag, p in self.base_world_pos.items()}

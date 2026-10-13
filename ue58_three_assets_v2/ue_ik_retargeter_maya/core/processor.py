@@ -425,20 +425,8 @@ class IKRetargetProcessor(object):
 
         # Sync in-scene IK Goal locators to match current animated/retargeted joint positions
         for fbik_solv in (getattr(self, "source_fbik_solver", None), getattr(self, "target_fbik_solver", None)):
-            if fbik_solv is not None:
-                fbik_solv._is_solving = True
-                try:
-                    if fbik_solv.pelvis_locator_dag and cmds.objExists(fbik_solv.pelvis_locator_dag):
-                        p_pos, p_rot = get_world_transform(fbik_solv.pelvis_dag)
-                        set_world_transform(fbik_solv.pelvis_locator_dag, p_pos, p_rot)
-                    for g_info in fbik_solv.goal_locators.values():
-                        loc_dag = g_info["locator_dag"]
-                        b_dag = g_info["bone_dag"]
-                        if cmds.objExists(loc_dag) and cmds.objExists(b_dag):
-                            b_pos, b_rot = get_world_transform(b_dag)
-                            set_world_transform(loc_dag, b_pos, b_rot)
-                finally:
-                    fbik_solv._is_solving = False
+            if fbik_solv is not None and hasattr(fbik_solv, "sync_locators_to_skeleton"):
+                fbik_solv.sync_locators_to_skeleton()
 
     def bake_animation(self, start_frame, end_frame, step=1, target_controls=None):
         """Bakes retargeted animation across the specified frame range."""

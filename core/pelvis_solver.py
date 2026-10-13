@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Pelvis / Root motion retarget solver.
-Directly implements UE5's FIKRetargetPelvisMotionOp (PelvisMotionOp.cpp).
+Directly implements UE 5.8's FIKRetargetPelvisMotionOp (PelvisMotionOp.cpp).
 """
 
 import maya.api.OpenMaya as om
@@ -15,20 +15,25 @@ class PelvisMotionSolver(object):
     """
 
     def __init__(self, source_pelvis, target_pelvis, source_skeleton, target_skeleton, target_pose_mgr=None):
-        self.source_pelvis = source_pelvis
-        self.target_pelvis = target_pelvis
+        self.source_pelvis = source_skeleton.resolve_bone_dag(source_pelvis) or source_pelvis
+        self.target_pelvis = target_skeleton.resolve_bone_dag(target_pelvis) or target_pelvis
         self.source_skeleton = source_skeleton
         self.target_skeleton = target_skeleton
         self.target_pose_mgr = target_pose_mgr
 
-        # Retargeting parameters (matching UE5 settings)
+        # Retargeting parameters (matching UE 5.8 FIKRetargetPelvisMotionOpSettings)
         self.scale_horizontal = 1.0
         self.scale_vertical = 1.0
         self.blend_to_absolute = 0.0  # 0.0 = scaled motion, 1.0 = absolute delta
         self.floor_constraint_weight = 1.0
         self.rotation_alpha = 1.0
+        self.affect_ik_horizontal = 1.0
+        self.affect_ik_vertical = 1.0
 
-        # Cache initial heights
+        self.update_retarget_pose()
+
+    def update_retarget_pose(self):
+        """Refreshes cached initial pelvis transforms and height ratio."""
         self.source_initial_pos = self.source_skeleton.rest_world_pos[self.source_pelvis]
         self.source_initial_rot = self.source_skeleton.rest_world_rot[self.source_pelvis]
 
@@ -41,32 +46,32 @@ class PelvisMotionSolver(object):
             if self.target_pose_mgr else self.target_skeleton.rest_world_rot[self.target_pelvis]
         )
 
-        # Height ratio: Target Height / Source Height
+        # Height ratio: Target Pelvis Height / Source Pelvis Height
         src_h = max(1e-3, abs(self.source_initial_pos.y))
         tgt_h = max(1e-3, abs(self.target_initial_pos.y))
         self.height_ratio = tgt_h / src_h
+        self.height_scale = self.height_ratio
 
     def solve(self, source_current_pos, source_current_rot):
         """
         Calculates retargeted target pelvis position and rotation.
+        Note on Maya OpenMaya MQuaternion (row-vector left-to-right):
+        - World rotation delta: rot_delta = source_initial_rot.inverse() * source_current_rot
+        - Apply world delta to target: retargeted_rot = target_initial_rot * rot_delta
         Returns: (target_world_pos, target_world_rot)
         """
         # --- 1. Rotation Retargeting ---
-        # Delta: R_delta = R_src_current * R_src_initial^-1
-        rot_delta = source_current_rot * self.source_initial_rot.inverse()
-        # Apply to target: R_tgt = R_delta * R_tgt_initial
-        retargeted_rot = rot_delta * self.target_initial_rot
+        rot_delta = (self.source_initial_rot.inverse() * source_current_rot).normal()
+        retargeted_rot = (self.target_initial_rot * rot_delta).normal()
 
         if self.rotation_alpha < 1.0 - 1e-4:
-            retargeted_rot = slerp(self.target_initial_rot, retargeted_rot, self.rotation_alpha)
+            retargeted_rot = slerp(self.target_initial_rot, retargeted_rot, self.rotation_alpha).normal()
 
         # --- 2. Translation Retargeting ---
         # Scaled Translation:
-        # Normalized source height = source_pos.y / source_initial_height
         norm_y = source_current_pos.y / max(1e-3, self.source_initial_pos.y)
         scaled_y = norm_y * self.target_initial_pos.y
 
-        # Horizontal movement scaled by height ratio and user slider
         delta_x = (source_current_pos.x - self.source_initial_pos.x) * self.height_ratio * self.scale_horizontal
         delta_z = (source_current_pos.z - self.source_initial_pos.z) * self.height_ratio * self.scale_horizontal
         pos_scaled = om.MVector(
@@ -83,7 +88,6 @@ class PelvisMotionSolver(object):
         out_pos = lerp_vector(pos_scaled, pos_absolute, self.blend_to_absolute)
 
         # --- 3. Floor Constraint ---
-        # If character is crouching below rest height, clamp or scale proportionally
         if self.floor_constraint_weight > 0.0:
             if source_current_pos.y < self.source_initial_pos.y:
                 floor_percent = max(0.0, source_current_pos.y / max(1e-3, self.source_initial_pos.y))
