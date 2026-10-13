@@ -303,3 +303,20 @@ class IKRetargetProcessor(object):
 
         print("[UE5 Retargeter] One-click retarget completed successfully!")
         return processor
+
+    def save_retarget_cache(self, filepath):
+        """
+        Saves the current clean bind-pose and auto-aligned retarget configuration
+        of Source A and Target B to a .retarget.json file.
+        """
+        from .retarget_cache import RetargetCache
+        return RetargetCache.save_to_file(self, filepath)
+
+    def load_retarget_cache(self, filepath):
+        """
+        Loads a saved .retarget.json bind-pose cache and applies it to the processor,
+        ensuring zero animation pollution even if Source A is already animated.
+        """
+        from .retarget_cache import RetargetCache
+        return RetargetCache.load_from_file(self, filepath)
+
