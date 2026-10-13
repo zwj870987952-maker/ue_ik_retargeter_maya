@@ -29,14 +29,16 @@ class RetargetPoseManager(object):
         self.root_translation_offset = om.MVector(0.0, 0.0, 0.0)
         self.aligned_world_pos = {}
         self.aligned_world_rot = {}
-        self.is_editing = False
+        self.aligned_local_pos = {}
+        self.aligned_local_rot = {}
+        self. is_editing = False
         self._temp_pose_cache = {}
 
         self.recompute_aligned_transforms()
 
     def recompute_aligned_transforms(self):
         """
-        Recomputes aligned world transforms for all joints in topological order.
+        Recomputes aligned world and local transforms for all joints in topological order.
         Note on Maya OpenMaya MQuaternion convention:
         v.rotateBy(q1 * q2) == v.rotateBy(q1).rotateBy(q2) (left-to-right).
         Therefore:
@@ -48,6 +50,8 @@ class RetargetPoseManager(object):
         """
         self.aligned_world_pos = {}
         self.aligned_world_rot = {}
+        self.aligned_local_pos = {}
+        self.aligned_local_rot = {}
         self.local_delta_rotations = {}
 
         for idx, j_name in enumerate(self.skeleton.joint_names):
@@ -61,6 +65,8 @@ class RetargetPoseManager(object):
                 world_delta = self.delta_rotations.get(j_name, om.MQuaternion.kIdentity)
                 aligned_rot = (rest_rot * world_delta).normal()
                 local_delta = (rest_rot.inverse() * aligned_rot).normal()
+                self.aligned_local_pos[j_name] = om.MVector(aligned_pos)
+                self.aligned_local_rot[j_name] = om.MQuaternion(aligned_rot)
             else:
                 p_name = self.skeleton.joint_names[p_idx]
                 p_rest_pos = self.skeleton.rest_world_pos[p_name]
@@ -85,6 +91,9 @@ class RetargetPoseManager(object):
                 # aligned_local_rot = local_rot * local_delta
                 aligned_local_rot = (aligned_rot * p_aligned_rot.inverse()).normal()
                 local_delta = (local_rot.inverse() * aligned_local_rot).normal()
+
+                self.aligned_local_pos[j_name] = local_vec
+                self.aligned_local_rot[j_name] = aligned_local_rot
 
             self.aligned_world_pos[j_name] = aligned_pos
             self.aligned_world_rot[j_name] = aligned_rot

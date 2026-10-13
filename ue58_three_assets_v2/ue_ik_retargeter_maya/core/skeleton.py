@@ -187,93 +187,23 @@ class RetargetSkeleton(object):
         """Returns the short Maya node name (without '|' DAG prefix) for a DAG path."""
         return self.short_names.get(dag_path, str(dag_path).split("|")[-1])
 
-    def cache_reference_tpose(self, force_recapture=False):
+    def cache_reference_tpose(self, force_recapture=True):
         """
-        Captures the pristine bind reference pose (T-pose / A-pose).
-        1. If 'ue58_pristine_bind_pose' attribute already exists on root_joint (and not force_recapture),
-           loads the exact original bind pose so repeated runs after viewport alignment stay 100% identical.
-        2. Otherwise uses dagPose (bindPose) if available, or temporarily disconnects anim curves,
-           caches rest transforms, and stores 'ue58_pristine_bind_pose' on root_joint.
+        Directly captures the skeleton's pose at the CURRENT frame as the reference/bind pose
+        for building retarget assets (does NOT query Maya dagPose/bindPose or disconnect curves).
         """
-        import json as _json
-        attr_name = "ue58_pristine_bind_pose"
-        if not force_recapture and cmds.attributeQuery(attr_name, node=self.root_joint, exists=True):
-            try:
-                raw_json = cmds.getAttr("{}.{}".format(self.root_joint, attr_name))
-                if raw_json:
-                    saved = _json.loads(raw_json)
-                    if len(saved) == len(self.joint_names) and all(d in saved for d in self.joint_names):
-                        for dag_path in self.joint_names:
-                            entry = saved[dag_path]
-                            p = entry["pos"]
-                            r = entry["rot"]
-                            self.rest_world_pos[dag_path] = om.MVector(p[0], p[1], p[2])
-                            self.rest_world_rot[dag_path] = om.MQuaternion(r[0], r[1], r[2], r[3]).normal()
-                        self._compute_local_rest_transforms()
-                        return
-            except Exception:
-                pass
+        self.cache_rest_pose()
 
-        bind_poses = set()
-        for dag_path in self.joint_names:
-            conns = cmds.listConnections(dag_path, type="dagPose") or []
-            for dp in conns:
-                if cmds.objExists(dp + ".bindPose") and cmds.getAttr(dp + ".bindPose"):
-                    bind_poses.add(dp)
-
-        if bind_poses:
-            curr_time = cmds.currentTime(q=True)
-            for bp in bind_poses:
-                try:
-                    cmds.dagPose(bp, restore=True)
-                except Exception:
-                    pass
-            cmds.refresh()
-            self.cache_rest_pose()
-            cmds.currentTime(curr_time, update=True)
-            cmds.refresh()
-        else:
-            connections = []
-            for dag_path in self.joint_names:
-                for attr in ["rotateX", "rotateY", "rotateZ", "translateX", "translateY", "translateZ"]:
-                    plug = "{}.{}".format(dag_path, attr)
-                    inputs = cmds.listConnections(plug, source=True, destination=False, plugs=True) or []
-                    if inputs:
-                        try:
-                            cmds.disconnectAttr(inputs[0], plug)
-                            connections.append((inputs[0], plug))
-                        except Exception:
-                            pass
-
-            cmds.refresh()
-            self.cache_rest_pose()
-
-            for src, dst in connections:
-                try:
-                    cmds.connectAttr(src, dst)
-                except Exception:
-                    pass
-            cmds.refresh()
-
-        # Persist pristine bind pose on root_joint so subsequent runs in the same scene stay idempotent
-        try:
-            snapshot = {}
-            for dag_path in self.joint_names:
-                p = self.rest_world_pos[dag_path]
-                r = self.rest_world_rot[dag_path]
-                snapshot[dag_path] = {
-                    "pos": [round(float(p.x), 6), round(float(p.y), 6), round(float(p.z), 6)],
-                    "rot": [round(float(r.x), 6), round(float(r.y), 6), round(float(r.z), 6), round(float(r.w), 6)],
-                }
-            if not cmds.attributeQuery(attr_name, node=self.root_joint, exists=True):
-                cmds.addAttr(self.root_joint, longName=attr_name, dataType="string", hidden=True)
-            cmds.setAttr("{}.{}".format(self.root_joint, attr_name), _json.dumps(snapshot), type="string")
-        except Exception:
-            pass
+    def capture_current_frame_as_bind_pose(self):
+        """
+        Explicitly captures the current frame's world and local joint transforms
+        as the reference bind pose.
+        """
+        self.cache_rest_pose()
 
     def cache_rest_pose(self):
         """
-        Records the current pose as the base reference/rest pose.
+        Records the current frame's pose as the base reference/bind pose.
         """
         for idx, dag_path in enumerate(self.joint_names):
             pos, rot = get_world_transform(dag_path)

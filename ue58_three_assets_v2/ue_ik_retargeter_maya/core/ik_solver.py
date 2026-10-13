@@ -219,3 +219,64 @@ class IKChainSolver(object):
         goal_rot = (aligned_end_rot * rot_delta).normal()
 
         return goal_pos, goal_rot
+
+
+class AlignPoleVectorSolver(object):
+    """
+    Directly implements UE 5.8's FIKRetargetAlignPoleVectorOp (AlignPoleVectorOp.cpp).
+    Rotates the target limb chain axially around its chord vector (Start -> End)
+    so the target elbow/knee bend plane aligns with the source animated bend plane,
+    preserving end-effector world position while eliminating elbow/knee plane drift.
+    """
+
+    @staticmethod
+    def align_limb_pole_vector(
+        src_p0, src_p1, src_p2,
+        tgt_p0, tgt_p1, tgt_p2,
+        tgt_r0, tgt_r1,
+        alpha=1.0
+    ):
+        """
+        Computes axial roll rotation around `tgt_p2 - tgt_p0` to align `(tgt_p1 - tgt_p0)_perp`
+        with `(src_p1 - src_p0)_perp`.
+        Returns: `(new_r0, new_r1, new_p1, q_roll_delta)`
+        """
+        if alpha <= 1e-4:
+            return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
+
+        src_chord = src_p2 - src_p0
+        tgt_chord = tgt_p2 - tgt_p0
+        if src_chord.length() < 1e-3 or tgt_chord.length() < 1e-3:
+            return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
+
+        src_axis = src_chord.normal()
+        tgt_axis = tgt_chord.normal()
+
+        src_mid = src_p1 - src_p0
+        tgt_mid = tgt_p1 - tgt_p0
+
+        src_pole = src_mid - src_axis * (src_mid * src_axis)
+        tgt_pole = tgt_mid - tgt_axis * (tgt_mid * tgt_axis)
+
+        # Only align when both source and target limbs have a meaningful bend (> 0.5 cm)
+        if src_pole.length() < 0.5 or tgt_pole.length() < 0.5:
+            return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
+
+        src_pole_dir = src_pole.normal()
+        tgt_pole_dir = tgt_pole.normal()
+
+        # Project source pole direction onto the plane orthogonal to tgt_axis
+        desired_pole = src_pole_dir - tgt_axis * (src_pole_dir * tgt_axis)
+        if desired_pole.length() < 1e-3:
+            return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
+        desired_pole_dir = desired_pole.normal()
+
+        q_full = quat_between_vectors(tgt_pole_dir, desired_pole_dir)
+        q_roll = slerp(om.MQuaternion.kIdentity, q_full, alpha).normal() if alpha < 1.0 - 1e-4 else q_full
+
+        new_r0 = (tgt_r0 * q_roll).normal()
+        new_r1 = (tgt_r1 * q_roll).normal()
+        new_p1 = tgt_p0 + rotate_vector_by_quat(tgt_mid, q_roll)
+
+        return new_r0, new_r1, new_p1, q_roll
+

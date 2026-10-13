@@ -20,29 +20,31 @@ from .chains import BoneChain, ChainMapping, AutoCharacterizer, CHAIN_PATTERNS
 from .retarget_pose import RetargetPoseManager
 from .pelvis_solver import PelvisMotionSolver
 from .fk_solver import FKChainSolver
-from .ik_solver import IKChainSolver, TwoBoneIKSolver
+from .ik_solver import IKChainSolver, TwoBoneIKSolver, AlignPoleVectorSolver
 from .auto_align import AutoPoseAligner
 from .retarget_assets import (
     IKRigAsset,
     IKRetargeterAsset,
     MayaSceneAssetBuilder,
+    ThreeAssetLoader,
     derive_unique_skeleton_tags,
     _quat_to_deg_list,
 )
-from .math_utils import set_world_transform, get_world_transform
+from .math_utils import set_world_transform, get_world_transform, rotate_vector_by_quat
 
 
 class IKRetargetProcessor(object):
     """
     Master processor that characterizes Source A and Target B into UE 5.8 standard
-    IKRigDefinitions + IKRetargeter, aligns base poses, and retargets animation.
+    IKRigDefinitions + IKRetargeter, aligns base poses from the current frame's pose,
+    and executes the modular UE 5.8 RetargetOps stack in a pure in-memory InOutGlobalPose buffer.
     """
 
     def __init__(self, source_root, target_root, source_pelvis=None, target_pelvis=None):
         src_resolved = resolve_skeleton_root_joint(source_root) or source_root
         tgt_resolved = resolve_skeleton_root_joint(target_root) or target_root
 
-        # Initialize Skeletons (all joints stored as full DAG paths '|...')
+        # Initialize Skeletons using the CURRENT frame's pose as the bind/reference pose
         self.source_skeleton = RetargetSkeleton(src_resolved)
         self.target_skeleton = RetargetSkeleton(tgt_resolved)
 
@@ -76,6 +78,12 @@ class IKRetargetProcessor(object):
         self.source_ikrig_asset = None
         self.target_ikrig_asset = None
         self.rtg_asset = None
+        self.last_three_assets_bundle = None
+        self.last_rtg_json_path = None
+
+        # UE 5.8 Modular RetargetOp Stack Toggles
+        self.enable_ik_pass = True
+        self.enable_pole_vector_op = True
 
         # Solvers
         self.pelvis_solver = None
@@ -126,7 +134,8 @@ class IKRetargetProcessor(object):
     def auto_map_chains(self):
         """
         Runs UE 5.8 AutoCharacterizer on Source A and Target B, pairs all matching
-        BoneChains, configures PelvisMotionSolver, and sets up FK/IK solvers.
+        BoneChains in topological parent-to-child order, configures PelvisMotionSolver,
+        and sets up FK/IK solvers.
         """
         self.chain_mappings = []
         self.fk_solvers = []
@@ -155,8 +164,11 @@ class IKRetargetProcessor(object):
         src_chains_dict = self.source_profile.get("bone_chains", {})
         tgt_chains_dict = self.target_profile.get("bone_chains", {})
 
-        # Map all chains in Target B that have a corresponding chain in Source A
-        for c_info in self.target_profile.get("chains", []):
+        # Sort target chains in topological root-to-leaf order so parent chains always solve before child chains
+        raw_chains = list(self.target_profile.get("chains", []))
+        raw_chains.sort(key=lambda c: self.target_skeleton.get_bone_index(c.get("start_bone_dag", "")))
+
+        for c_info in raw_chains:
             cname = c_info["chain_name"]
             if cname in src_chains_dict and cname in tgt_chains_dict:
                 src_chain = src_chains_dict[cname]
@@ -208,37 +220,89 @@ class IKRetargetProcessor(object):
 
         return True
 
+    def _propagate_in_memory_below(self, start_bone_dag, in_out_pos, in_out_rot, curr_local_rot):
+        """
+        Parallels UE 5.8's FRetargetSkeleton::UpdateGlobalTransformsBelowBone,
+        UpdateIntermediateParents, and UpdateNonRetargetedChildren.
+        Propagates `in_out_pos` and `in_out_rot` down the target hierarchy in pure memory
+        without any Maya DG `cmds.xform` queries!
+        """
+        start_idx = self.target_skeleton.get_bone_index(start_bone_dag)
+        if start_idx < 0:
+            return
+
+        p_idx = self.target_skeleton.parent_indices[start_idx]
+        if p_idx >= 0:
+            p_dag = self.target_skeleton.joint_names[p_idx]
+            curr_local_rot[start_bone_dag] = (in_out_rot[start_bone_dag] * in_out_rot[p_dag].inverse()).normal()
+            loc_vec = self.target_pose_mgr.aligned_local_pos[start_bone_dag]
+            in_out_pos[start_bone_dag] = in_out_pos[p_dag] + rotate_vector_by_quat(loc_vec, in_out_rot[p_dag])
+        else:
+            curr_local_rot[start_bone_dag] = om.MQuaternion(in_out_rot[start_bone_dag])
+
+        child_indices = self.target_skeleton.get_children_indices_recursive(start_idx)
+        for c_idx in child_indices:
+            c_dag = self.target_skeleton.joint_names[c_idx]
+            cp_idx = self.target_skeleton.parent_indices[c_idx]
+            cp_dag = self.target_skeleton.joint_names[cp_idx]
+            loc_vec = self.target_pose_mgr.aligned_local_pos[c_dag]
+            in_out_pos[c_dag] = in_out_pos[cp_dag] + rotate_vector_by_quat(loc_vec, in_out_rot[cp_dag])
+            in_out_rot[c_dag] = (curr_local_rot[c_dag] * in_out_rot[cp_dag]).normal()
+
     def retarget_frame(self):
         """
-        Executes complete UE 5.8 retarget pipeline for current frame:
-        1. Samples animated source global pose.
-        2. Solves PelvisMotionOp (scaled translation + world delta rotation).
-        3. Solves FKChainsOp in topological parent-to-child order (including fingers & toes).
-        4. Solves IKChainsOp + Two-Bone IK + AlignPoleVectorOp on limbs.
+        Executes the complete UE 5.8 modular RetargetOps pipeline in a pure in-memory
+        `InOutGlobalPose` buffer (`in_out_pos`, `in_out_rot`), then writes the final
+        solved pose to the Maya scene in a single pass:
+          Op 1: FIKRetargetPelvisMotionOp
+          Op 2: FIKRetargetFKChainsOp (topological order + UpdateIntermediateParents / NonRetargetedChildren)
+          Op 3: FIKRetargetIKChainsOp + FIKRetargetRunIKRigOp (when `enable_ik_pass=True`)
+          Op 4: FIKRetargetAlignPoleVectorOp (when `enable_pole_vector_op=True`)
         """
         src_pose = self.source_skeleton.get_current_pose()
         src_pelvis_pos, src_pelvis_rot = src_pose[self.source_pelvis]
 
-        # Step 1: PelvisMotionOp
+        # Initialize pure in-memory InOutGlobalPose buffer from Target B's aligned retarget pose
+        in_out_pos = {
+            dag: om.MVector(self.target_pose_mgr.get_aligned_rest_position(dag))
+            for dag in self.target_skeleton.joint_names
+        }
+        in_out_rot = {
+            dag: om.MQuaternion(self.target_pose_mgr.get_aligned_rest_rotation(dag))
+            for dag in self.target_skeleton.joint_names
+        }
+        curr_local_rot = {
+            dag: om.MQuaternion(self.target_pose_mgr.aligned_local_rot[dag])
+            for dag in self.target_skeleton.joint_names
+        }
+
+        # ======================================================================
+        # Op 1: FIKRetargetPelvisMotionOp (In-Memory)
+        # ======================================================================
         tgt_pelvis_pos, tgt_pelvis_rot = self.pelvis_solver.solve(src_pelvis_pos, src_pelvis_rot)
-        set_world_transform(self.target_pelvis, tgt_pelvis_pos, tgt_pelvis_rot)
+        in_out_pos[self.target_pelvis] = tgt_pelvis_pos
+        in_out_rot[self.target_pelvis] = tgt_pelvis_rot
+        self._propagate_in_memory_below(self.target_pelvis, in_out_pos, in_out_rot, curr_local_rot)
 
         rest_pelvis_pos = self.target_pose_mgr.get_aligned_rest_position(self.target_pelvis)
         pelvis_translation_delta = tgt_pelvis_pos - rest_pelvis_pos
 
-        tgt_pose_dict = {
-            self.target_pelvis: (tgt_pelvis_pos, tgt_pelvis_rot)
-        }
-
-        # Step 2: FKChainsOp in topological order
+        # ======================================================================
+        # Op 2: FIKRetargetFKChainsOp (In-Memory, Topological Order)
+        # ======================================================================
         for fk_solv in self.fk_solvers:
-            chain_rotations = fk_solv.solve(src_pose, target_current_pose_dict=tgt_pose_dict)
+            if not fk_solv.mapping.enable_fk or not fk_solv.tgt_chain.bones:
+                continue
+            tgt_pose_view = {dag: (in_out_pos[dag], in_out_rot[dag]) for dag in fk_solv.tgt_chain.bones}
+            tgt_parent = self.target_skeleton.get_parent_joint(fk_solv.tgt_chain.start_bone)
+            if tgt_parent:
+                tgt_pose_view[tgt_parent] = (in_out_pos[tgt_parent], in_out_rot[tgt_parent])
+
+            chain_rotations = fk_solv.solve(src_pose, target_current_pose_dict=tgt_pose_view)
             for tgt_joint in fk_solv.tgt_chain.bones:
                 if tgt_joint in chain_rotations:
-                    rot = chain_rotations[tgt_joint]
-                    set_world_transform(tgt_joint, quat=rot)
-                    pos, _ = get_world_transform(tgt_joint)
-                    tgt_pose_dict[tgt_joint] = (pos, rot)
+                    in_out_rot[tgt_joint] = chain_rotations[tgt_joint]
+                    self._propagate_in_memory_below(tgt_joint, in_out_pos, in_out_rot, curr_local_rot)
 
         def _pick_triad(chain_obj):
             b_list = chain_obj.bones
@@ -253,58 +317,111 @@ class IKRetargetProcessor(object):
             b_m = min(cands, key=lambda b: (chain_obj.skeleton.rest_world_pos[b] - mid_pt).length())
             return b_u, b_m, b_e
 
-        # Step 3: IKChainsOp + RunIKRigOp + AlignPoleVectorOp
-        for ik_solv in self.ik_solvers:
-            tgt_chain = ik_solv.tgt_chain
-            if len(tgt_chain.bones) < 3 or len(ik_solv.src_chain.bones) < 3:
-                continue
+        # ======================================================================
+        # Op 3 & Op 4: FIKRetargetIKChainsOp + FIKRetargetRunIKRigOp (In-Memory)
+        # ======================================================================
+        if self.enable_ik_pass:
+            for ik_solv in self.ik_solvers:
+                if not ik_solv.mapping.enable_ik:
+                    continue
+                tgt_chain = ik_solv.tgt_chain
+                if len(tgt_chain.bones) < 3 or len(ik_solv.src_chain.bones) < 3:
+                    continue
 
-            root_bone, mid_bone, end_bone = _pick_triad(tgt_chain)
+                root_bone, mid_bone, end_bone = _pick_triad(tgt_chain)
 
-            tgt_start_pos, current_root_rot = get_world_transform(root_bone)
-            current_mid_pos, current_mid_rot = get_world_transform(mid_bone)
-            current_end_pos, current_end_rot = get_world_transform(end_bone)
+                tgt_start_pos = in_out_pos[root_bone]
+                current_root_rot = in_out_rot[root_bone]
+                current_mid_pos = in_out_pos[mid_bone]
+                current_mid_rot = in_out_rot[mid_bone]
+                current_end_pos = in_out_pos[end_bone]
+                current_end_rot = in_out_rot[end_bone]
 
-            goal_pos, goal_rot = ik_solv.calculate_goal_transform(
-                src_pose, tgt_start_pos, pelvis_translation_delta=pelvis_translation_delta
-            )
+                goal_pos, goal_rot = ik_solv.calculate_goal_transform(
+                    src_pose, tgt_start_pos, pelvis_translation_delta=pelvis_translation_delta
+                )
 
-            p0 = self.target_pose_mgr.get_aligned_rest_position(root_bone)
-            p1 = self.target_pose_mgr.get_aligned_rest_position(mid_bone)
-            p2 = self.target_pose_mgr.get_aligned_rest_position(end_bone)
-            len1 = (p1 - p0).length()
-            len2 = (p2 - p1).length()
+                p0 = self.target_pose_mgr.get_aligned_rest_position(root_bone)
+                p1 = self.target_pose_mgr.get_aligned_rest_position(mid_bone)
+                p2 = self.target_pose_mgr.get_aligned_rest_position(end_bone)
+                len1 = (p1 - p0).length()
+                len2 = (p2 - p1).length()
 
-            src_root_b, src_mid_b, src_end_b = _pick_triad(ik_solv.src_chain)
-            src_p0, _ = src_pose[src_root_b]
-            src_p1, _ = src_pose[src_mid_b]
-            src_p2, _ = src_pose[src_end_b]
+                src_root_b, src_mid_b, src_end_b = _pick_triad(ik_solv.src_chain)
+                src_p0, _ = src_pose[src_root_b]
+                src_p1, _ = src_pose[src_mid_b]
+                src_p2, _ = src_pose[src_end_b]
 
-            src_limb_vec = src_p2 - src_p0
-            src_limb_axis = src_limb_vec.normal() if src_limb_vec.length() > 1e-4 else om.MVector(0, -1, 0)
-            src_mid_delta = src_p1 - src_p0
-            src_bend_dir = src_mid_delta - src_limb_axis * (src_mid_delta * src_limb_axis)
+                src_limb_vec = src_p2 - src_p0
+                src_limb_axis = src_limb_vec.normal() if src_limb_vec.length() > 1e-4 else om.MVector(0, -1, 0)
+                src_mid_delta = src_p1 - src_p0
+                src_bend_dir = src_mid_delta - src_limb_axis * (src_mid_delta * src_limb_axis)
 
-            if src_bend_dir.length() > 1e-4:
-                pv_target = tgt_start_pos + src_bend_dir.normal() * len1
+                if src_bend_dir.length() > 1e-4:
+                    pv_target = tgt_start_pos + src_bend_dir.normal() * len1
+                else:
+                    pv_target = current_mid_pos
+
+                is_leg = ("leg" in ik_solv.mapping.name.lower()) or ("foot" in end_bone.lower())
+                end_rot_blend = 1.0 if is_leg else 0.0
+
+                rot_upper, rot_lower, rot_end, _, _ = TwoBoneIKSolver.solve(
+                    tgt_start_pos, current_mid_pos, current_end_pos,
+                    current_root_rot, current_mid_rot, current_end_rot,
+                    goal_pos, goal_rot,
+                    pv_target,
+                    len1, len2,
+                    end_rot_blend=end_rot_blend
+                )
+
+                in_out_rot[root_bone] = rot_upper
+                self._propagate_in_memory_below(root_bone, in_out_pos, in_out_rot, curr_local_rot)
+                in_out_rot[mid_bone] = rot_lower
+                self._propagate_in_memory_below(mid_bone, in_out_pos, in_out_rot, curr_local_rot)
+                in_out_rot[end_bone] = rot_end
+                self._propagate_in_memory_below(end_bone, in_out_pos, in_out_rot, curr_local_rot)
+
+        # ======================================================================
+        # Op 5: FIKRetargetAlignPoleVectorOp (In-Memory)
+        # ======================================================================
+        if self.enable_pole_vector_op:
+            for ik_solv in self.ik_solvers:
+                tgt_chain = ik_solv.tgt_chain
+                if len(tgt_chain.bones) < 3 or len(ik_solv.src_chain.bones) < 3:
+                    continue
+                root_bone, mid_bone, end_bone = _pick_triad(tgt_chain)
+                src_root_b, src_mid_b, src_end_b = _pick_triad(ik_solv.src_chain)
+
+                src_p0, _ = src_pose[src_root_b]
+                src_p1, _ = src_pose[src_mid_b]
+                src_p2, _ = src_pose[src_end_b]
+
+                tgt_p0 = in_out_pos[root_bone]
+                tgt_p1 = in_out_pos[mid_bone]
+                tgt_p2 = in_out_pos[end_bone]
+                tgt_r0 = in_out_rot[root_bone]
+                tgt_r1 = in_out_rot[mid_bone]
+
+                new_r0, new_r1, _, q_roll = AlignPoleVectorSolver.align_limb_pole_vector(
+                    src_p0, src_p1, src_p2,
+                    tgt_p0, tgt_p1, tgt_p2,
+                    tgt_r0, tgt_r1,
+                    alpha=1.0,
+                )
+                if abs(q_roll.w) < 0.999999:
+                    in_out_rot[root_bone] = new_r0
+                    self._propagate_in_memory_below(root_bone, in_out_pos, in_out_rot, curr_local_rot)
+                    in_out_rot[mid_bone] = new_r1
+                    self._propagate_in_memory_below(mid_bone, in_out_pos, in_out_rot, curr_local_rot)
+
+        # ======================================================================
+        # Final Step: Single Batch Write of InOutGlobalPose to Maya Scene
+        # ======================================================================
+        for dag in self.target_skeleton.joint_names:
+            if dag == self.target_pelvis:
+                set_world_transform(dag, in_out_pos[dag], in_out_rot[dag])
             else:
-                pv_target = current_mid_pos
-
-            is_leg = ("leg" in ik_solv.mapping.name.lower()) or ("foot" in end_bone.lower())
-            end_rot_blend = 1.0 if is_leg else 0.0
-
-            rot_upper, rot_lower, rot_end, _, _ = TwoBoneIKSolver.solve(
-                tgt_start_pos, current_mid_pos, current_end_pos,
-                current_root_rot, current_mid_rot, current_end_rot,
-                goal_pos, goal_rot,
-                pv_target,
-                len1, len2,
-                end_rot_blend=end_rot_blend
-            )
-
-            set_world_transform(root_bone, quat=rot_upper)
-            set_world_transform(mid_bone, quat=rot_lower)
-            set_world_transform(end_bone, quat=rot_end)
+                set_world_transform(dag, quat=in_out_rot[dag])
 
         # Sync in-scene IK Goal locators to match current animated/retargeted joint positions
         for fbik_solv in (getattr(self, "source_fbik_solver", None), getattr(self, "target_fbik_solver", None)):
@@ -343,14 +460,22 @@ class IKRetargetProcessor(object):
         output_dir=None,
         build_in_scene=True,
         apply_aligned_pose=True,
+        capture_current_frame=True,
     ):
         """
-        Generates the 3 UE 5.8 standard retarget assets:
+        Generates the 3 UE 5.8 standard retarget assets using the CURRENT frame's pose as the bind pose:
           1. IK_AutoGeneratedSource_<SrcTag> (.ikrig.json + Maya Outliner node)
           2. IK_AutoGeneratedTarget_<TgtTag> (.ikrig.json + Maya Outliner node)
           3. RTG_AutoGenerated_<SrcTag>_to_<TgtTag> (.rtg.json + Maya Outliner node)
         """
-        self._rebuild_asset_definitions()
+        if capture_current_frame:
+            self.source_skeleton.capture_current_frame_as_bind_pose()
+            self.target_skeleton.capture_current_frame_as_bind_pose()
+            self.source_pose_mgr.recompute_aligned_transforms()
+            self.target_pose_mgr.recompute_aligned_transforms()
+            self.setup_default_chains()
+        else:
+            self._rebuild_asset_definitions()
 
         if output_dir is None:
             scene_path = cmds.file(q=True, sceneName=True)
@@ -367,12 +492,24 @@ class IKRetargetProcessor(object):
         tgt_json_path = os.path.join(output_dir, self.target_ikrig_asset.asset_name + ".ikrig.json")
         rtg_json_path = os.path.join(output_dir, self.rtg_asset.asset_name + ".rtg.json")
 
+        src_dict = self.source_ikrig_asset.to_dict()
+        tgt_dict = self.target_ikrig_asset.to_dict()
+        rtg_dict = self.rtg_asset.to_dict()
+
         with open(src_json_path, "w", encoding="utf-8") as f:
-            json.dump(self.source_ikrig_asset.to_dict(), f, indent=2, ensure_ascii=False)
+            json.dump(src_dict, f, indent=2, ensure_ascii=False)
         with open(tgt_json_path, "w", encoding="utf-8") as f:
-            json.dump(self.target_ikrig_asset.to_dict(), f, indent=2, ensure_ascii=False)
+            json.dump(tgt_dict, f, indent=2, ensure_ascii=False)
         with open(rtg_json_path, "w", encoding="utf-8") as f:
-            json.dump(self.rtg_asset.to_dict(), f, indent=2, ensure_ascii=False)
+            json.dump(rtg_dict, f, indent=2, ensure_ascii=False)
+
+        self.last_rtg_json_path = rtg_json_path
+        self.last_three_assets_bundle = {
+            "src_ikrig": src_dict,
+            "tgt_ikrig": tgt_dict,
+            "rtg": rtg_dict,
+            "rtg_path": rtg_json_path,
+        }
 
         scene_nodes = {}
         if build_in_scene:
@@ -397,7 +534,29 @@ class IKRetargetProcessor(object):
                 "IK_AutoGeneratedTarget": tgt_json_path,
                 "RTG_AutoGenerated": rtg_json_path,
             },
+            "bundle": self.last_three_assets_bundle,
         }
+
+    def load_three_assets(self, rtg_json_path=None):
+        """
+        Loads `RTG_AutoGenerated.rtg.json` and its companion `IK_AutoGeneratedSource.ikrig.json`
+        and `IK_AutoGeneratedTarget.ikrig.json` files into this processor.
+        """
+        target_path = rtg_json_path or self.last_rtg_json_path
+        if target_path and os.path.exists(target_path):
+            bundle = ThreeAssetLoader.load_from_rtg_file(self, target_path)
+            self.last_rtg_json_path = target_path
+            self.last_three_assets_bundle = bundle
+            return bundle
+        if self.last_three_assets_bundle:
+            ThreeAssetLoader.apply_three_asset_dicts(
+                self,
+                self.last_three_assets_bundle.get("src_ikrig"),
+                self.last_three_assets_bundle.get("tgt_ikrig"),
+                self.last_three_assets_bundle.get("rtg"),
+            )
+            return self.last_three_assets_bundle
+        return None
 
     def print_asset_verification_report(self, src_json_path="", tgt_json_path="", rtg_json_path="", scene_nodes=None):
         """Prints a clean, comprehensive verification summary to Maya's Script Editor."""
