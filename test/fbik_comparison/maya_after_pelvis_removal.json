@@ -1,0 +1,10 @@
+{
+  "frame": 2.0,
+  "curves": 159,
+  "pelvis_controls": [],
+  "solver_count": 2,
+  "goals_per_rig": {
+    "Src_CC_Base_BoneRoot": 4,
+    "Tgt_mixamorig_Hips": 4
+  }
+}

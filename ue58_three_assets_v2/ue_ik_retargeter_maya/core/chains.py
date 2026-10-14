@@ -194,14 +194,14 @@ KNOWN_SKELETON_TEMPLATES = {
         ],
         "fbik_bone_settings": {
             "Hips":          {"rotation_stiffness": 0.95},
-            "LeftShoulder":  {"rotation_stiffness": 0.90},
-            "RightShoulder": {"rotation_stiffness": 0.90},
+            "LeftShoulder":  {"rotation_stiffness": 0.95},
+            "RightShoulder": {"rotation_stiffness": 0.95},
             "LeftFoot":      {"rotation_stiffness": 0.85},
             "RightFoot":     {"rotation_stiffness": 0.85},
-            "LeftLeg":       {"preferred_axis": "+X", "is_hinge": False},
-            "RightLeg":      {"preferred_axis": "+X", "is_hinge": False},
-            "LeftForeArm":   {"preferred_axis": "+Y", "is_hinge": False},
-            "RightForeArm":  {"preferred_axis": "-Y", "is_hinge": False},
+            "LeftLeg":       {"preferred_axis": "+X", "is_hinge": True},
+            "RightLeg":      {"preferred_axis": "+X", "is_hinge": True},
+            "LeftForeArm":   {"preferred_axis": "+Y", "is_hinge": True},
+            "RightForeArm":  {"preferred_axis": "-Y", "is_hinge": True},
         },
         "bones_to_pin": [],
     },
@@ -337,17 +337,27 @@ KNOWN_SKELETON_TEMPLATES = {
             ("LeftFoot",      "L_ToeBase",   "L_ToeBase",   ""),
             ("RightLeg",      "R_Thigh",     "R_Foot",      "RightFootIK"),
             ("RightFoot",     "R_ToeBase",   "R_ToeBase",   ""),
+            ("LeftBigToe", "L_BigToe1", "L_BigToe1", ""),
+            ("LeftIndexToe", "L_IndexToe1", "L_IndexToe1", ""),
+            ("LeftMiddleToe", "L_MidToe1", "L_MidToe1", ""),
+            ("LeftRingToe", "L_RingToe1", "L_RingToe1", ""),
+            ("LeftPinkyToe", "L_PinkyToe1", "L_PinkyToe1", ""),
+            ("RightBigToe", "R_BigToe1", "R_BigToe1", ""),
+            ("RightIndexToe", "R_IndexToe1", "R_IndexToe1", ""),
+            ("RightMiddleToe", "R_MidToe1", "R_MidToe1", ""),
+            ("RightRingToe", "R_RingToe1", "R_RingToe1", ""),
+            ("RightPinkyToe", "R_PinkyToe1", "R_PinkyToe1", ""),
         ],
         "fbik_bone_settings": {
             "Hip":        {"rotation_stiffness": 0.95},
-            "L_Clavicle": {"rotation_stiffness": 0.90},
-            "R_Clavicle": {"rotation_stiffness": 0.90},
+            "L_Clavicle": {"rotation_stiffness": 0.95},
+            "R_Clavicle": {"rotation_stiffness": 0.95},
             "L_Foot":     {"rotation_stiffness": 0.85},
             "R_Foot":     {"rotation_stiffness": 0.85},
-            "L_Calf":     {"preferred_axis": "-X", "is_hinge": False},
-            "R_Calf":     {"preferred_axis": "-X", "is_hinge": False},
-            "L_Forearm":  {"preferred_axis": "+X", "is_hinge": False},
-            "R_Forearm":  {"preferred_axis": "+X", "is_hinge": False},
+            "L_Calf":     {"preferred_axis": "-X", "is_hinge": True},
+            "R_Calf":     {"preferred_axis": "-X", "is_hinge": True},
+            "L_Forearm":  {"preferred_axis": "+X", "is_hinge": True},
+            "R_Forearm":  {"preferred_axis": "+X", "is_hinge": True},
             "Pelvis":     {"excluded": True},
         },
         "bones_to_pin": [],
@@ -589,7 +599,7 @@ class AutoCharacterizer(object):
                 if s_dag and e_dag:
                     chains.append(BoneChain(c_name, s_dag, e_dag, skeleton, ik_goal_name=goal_name))
 
-            fbik_settings = dict(tpl.get("fbik_bone_settings", {}))
+            fbik_settings = {name:dict(value) for name,value in tpl.get("fbik_bone_settings", {}).items()}
             bones_to_pin = list(tpl.get("bones_to_pin", []))
             template_used = best_template
         else:
@@ -652,6 +662,9 @@ class AutoCharacterizer(object):
                     "initial_pos": [float(pos.x), float(pos.y), float(pos.z)],
                     "initial_rot": [float(rot.x), float(rot.y), float(rot.z), float(rot.w)],
                 })
+
+        from .pole_vector import calibrate_knee_settings
+        fbik_settings = calibrate_knee_settings(skeleton, bone_chains_dict, fbik_settings)
 
         return {
             "template_name": template_used,

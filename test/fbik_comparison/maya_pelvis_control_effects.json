@@ -1,0 +1,33 @@
+{
+  "solvers": {
+    "Src_CC_Base_BoneRoot": {
+      "native_goal_count": 4,
+      "current_control_offset_cm": 0.0,
+      "neutral_vs_current_max_joint_difference_cm": 0.0,
+      "pelvis_control_down_10_cm": {
+        "root_displacement_cm": 8.144758149236965,
+        "max_joint_displacement_cm": 19.626765168110417
+      },
+      "pin_to_input_with_control_down_10_cm": {
+        "root_displacement_cm": 9.999999999999986
+      },
+      "goal_locators_edited": false,
+      "restore_max_joint_difference_cm": 0.0
+    },
+    "Tgt_mixamorig_Hips": {
+      "native_goal_count": 4,
+      "current_control_offset_cm": 0.0,
+      "neutral_vs_current_max_joint_difference_cm": 0.0,
+      "pelvis_control_down_10_cm": {
+        "root_displacement_cm": 8.382724808344745,
+        "max_joint_displacement_cm": 19.073662885451046
+      },
+      "pin_to_input_with_control_down_10_cm": {
+        "root_displacement_cm": 10.0
+      },
+      "goal_locators_edited": false,
+      "restore_max_joint_difference_cm": 0.0
+    }
+  },
+  "animation_preserved": true
+}

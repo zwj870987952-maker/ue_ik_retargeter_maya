@@ -5,3 +5,16 @@ __pycache__/
 .idea/
 *.swp
 *.bak
+ue58_three_assets_v2/ue_ik_retargeter_maya/native/_build/
+ue58_three_assets_v2/ue_ik_retargeter_maya/native/bin/
+
+# Local Maya sessions and generated asset exports
+.dcc-mcp/
+test/test_maya.ma
+test/retarget_assets/
+test/fbik_comparison/original_animation_curves.ma
+test/fbik_comparison/maya_assets/
+test/fbik_comparison/maya_*.png
+test/fbik_comparison/maya_before_assembly.json
+test/fbik_comparison/maya_final_state.json
+ue58_three_assets_v2/ue_ik_retargeter_maya/retarget_assets/

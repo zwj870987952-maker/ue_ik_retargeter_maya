@@ -1,0 +1,82 @@
+{
+  "rigs": {
+    "Src_CC_Base_BoneRoot": [
+      {
+        "input_pelvis_down_cm": 10.0,
+        "knees": {
+          "Left": {
+            "forward_distance_cm": 17.714620388492836,
+            "bend_angle_degrees": 47.18324365273958,
+            "reference_source": "foot_to_toe"
+          },
+          "Right": {
+            "forward_distance_cm": 17.72759594987041,
+            "bend_angle_degrees": 47.18737087600512,
+            "reference_source": "foot_to_toe"
+          }
+        }
+      },
+      {
+        "input_pelvis_down_cm": 20.0,
+        "knees": {
+          "Left": {
+            "forward_distance_cm": 22.914690417021898,
+            "bend_angle_degrees": 72.58300796145562,
+            "reference_source": "foot_to_toe"
+          },
+          "Right": {
+            "forward_distance_cm": 22.93471203422358,
+            "bend_angle_degrees": 72.60387048005347,
+            "reference_source": "foot_to_toe"
+          }
+        }
+      }
+    ],
+    "Tgt_mixamorig_Hips": [
+      {
+        "input_pelvis_down_cm": 10.0,
+        "knees": {
+          "Left": {
+            "forward_distance_cm": 17.436785277735567,
+            "bend_angle_degrees": 50.45290691612959,
+            "reference_source": "foot_to_toe"
+          },
+          "Right": {
+            "forward_distance_cm": 17.437922120434635,
+            "bend_angle_degrees": 50.456645290962314,
+            "reference_source": "foot_to_toe"
+          }
+        }
+      },
+      {
+        "input_pelvis_down_cm": 20.0,
+        "knees": {
+          "Left": {
+            "forward_distance_cm": 22.23710915977104,
+            "bend_angle_degrees": 76.43476314396092,
+            "reference_source": "foot_to_toe"
+          },
+          "Right": {
+            "forward_distance_cm": 22.240794650999476,
+            "bend_angle_degrees": 76.46636569582009,
+            "reference_source": "foot_to_toe"
+          }
+        }
+      }
+    ]
+  },
+  "analytic_checks": {
+    "generated_profiles_keep_correct_sign": true,
+    "straight_and_opposite_noise_forward": true,
+    "uncalibrated_limb_uses_clear_animated_bend": true,
+    "opposite_pole_axial_roll_preserves_endpoint": true
+  },
+  "hot_reload_checks": {
+    "node_registry_preserved": true,
+    "native_handles_recreated": true
+  },
+  "animation_preserved": true,
+  "joint_channels_preserved": true,
+  "maya_errors": [],
+  "passed": true
+}

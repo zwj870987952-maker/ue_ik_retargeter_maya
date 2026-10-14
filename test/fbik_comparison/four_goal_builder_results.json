@@ -1,0 +1,9 @@
+{
+  "goal_count": 4,
+  "locator_count": 4,
+  "solver_root_preserved": true,
+  "legacy_pelvis_connection": false,
+  "profile": "Custom_Biped_Heuristic",
+  "animation_preserved": true,
+  "passed": true
+}

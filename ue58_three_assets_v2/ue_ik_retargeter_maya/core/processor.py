@@ -352,13 +352,9 @@ class IKRetargetProcessor(object):
                 src_p1, _ = src_pose[src_mid_b]
                 src_p2, _ = src_pose[src_end_b]
 
-                src_limb_vec = src_p2 - src_p0
-                src_limb_axis = src_limb_vec.normal() if src_limb_vec.length() > 1e-4 else om.MVector(0, -1, 0)
-                src_mid_delta = src_p1 - src_p0
-                src_bend_dir = src_mid_delta - src_limb_axis * (src_mid_delta * src_limb_axis)
-
-                if src_bend_dir.length() > 1e-4:
-                    pv_target = tgt_start_pos + src_bend_dir.normal() * len1
+                src_bend_dir = ik_solv.pole_direction(src_pose,source=True)
+                if src_bend_dir is not None:
+                    pv_target = tgt_start_pos + src_bend_dir * len1
                 else:
                     pv_target = current_mid_pos
 
@@ -371,7 +367,9 @@ class IKRetargetProcessor(object):
                     goal_pos, goal_rot,
                     pv_target,
                     len1, len2,
-                    end_rot_blend=end_rot_blend
+                    end_rot_blend=end_rot_blend,
+                    reference_pole_direction=ik_solv.pole_direction(
+                        {n:(in_out_pos[n],in_out_rot[n]) for n in tgt_chain.bones},source=False)
                 )
 
                 in_out_rot[root_bone] = rot_upper
@@ -407,6 +405,9 @@ class IKRetargetProcessor(object):
                     tgt_p0, tgt_p1, tgt_p2,
                     tgt_r0, tgt_r1,
                     alpha=1.0,
+                    src_reference_direction=ik_solv.pole_direction(src_pose,source=True),
+                    tgt_reference_direction=ik_solv.pole_direction(
+                        {n:(in_out_pos[n],in_out_rot[n]) for n in tgt_chain.bones},source=False),
                 )
                 if abs(q_roll.w) < 0.999999:
                     in_out_rot[root_bone] = new_r0

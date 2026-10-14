@@ -13,11 +13,14 @@ import importlib
 SUBMODULES_ORDER = [
     "ue_ik_retargeter_maya.core.math_utils",
     "ue_ik_retargeter_maya.core.skeleton",
+    "ue_ik_retargeter_maya.core.pole_vector",
     "ue_ik_retargeter_maya.core.chains",
     "ue_ik_retargeter_maya.core.retarget_pose",
     "ue_ik_retargeter_maya.core.pelvis_solver",
     "ue_ik_retargeter_maya.core.fk_solver",
     "ue_ik_retargeter_maya.core.ik_solver",
+    "ue_ik_retargeter_maya.core.pbik_native",
+    "ue_ik_retargeter_maya.core.fbik_scene",
     "ue_ik_retargeter_maya.core.fbik_solver",
     "ue_ik_retargeter_maya.core.auto_align",
     "ue_ik_retargeter_maya.core.retarget_assets",
@@ -41,6 +44,9 @@ def reload_plugin():
             importlib.reload(sys.modules[mod_name])
         else:
             importlib.import_module(mod_name)
+
+    from .core.fbik_scene import reload_node_compute
+    reload_node_compute()
 
     global IKRetargetProcessor, RetargetSkeleton, BoneChain, ChainMapping, AutoCharacterizer
     global RetargetPoseManager, PelvisMotionSolver, FKChainSolver, IKChainSolver

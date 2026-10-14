@@ -380,8 +380,6 @@ class RetargeterWindow(QtWidgets.QDialog):
             if fbik_solv is not None:
                 fbik_solv._is_solving = True
                 try:
-                    if fbik_solv.pelvis_locator_dag and cmds.objExists(fbik_solv.pelvis_locator_dag):
-                        set_world_transform(fbik_solv.pelvis_locator_dag, fbik_solv.pelvis_init_pos, fbik_solv.pelvis_init_rot)
                     for g_info in fbik_solv.goal_locators.values():
                         loc_dag = g_info["locator_dag"]
                         if cmds.objExists(loc_dag):
@@ -408,9 +406,6 @@ class RetargeterWindow(QtWidgets.QDialog):
                     else:
                         set_world_transform(j, quat=self.processor.target_skeleton.rest_world_rot[j])
                 if fbik_solv:
-                    if fbik_solv.pelvis_locator_dag and cmds.objExists(fbik_solv.pelvis_locator_dag):
-                        p_pos, p_rot = get_world_transform(fbik_solv.pelvis_dag)
-                        set_world_transform(fbik_solv.pelvis_locator_dag, p_pos, p_rot)
                     for g_info in fbik_solv.goal_locators.values():
                         loc_dag = g_info["locator_dag"]
                         b_dag = g_info["bone_dag"]

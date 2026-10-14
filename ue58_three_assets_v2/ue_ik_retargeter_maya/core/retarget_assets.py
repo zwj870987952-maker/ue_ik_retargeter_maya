@@ -24,7 +24,8 @@ import maya.cmds as cmds
 import maya.api.OpenMaya as om
 
 from .math_utils import quat_to_euler_deg, set_world_transform
-from .fbik_solver import FullBodyIKSolver, register_live_fbik_solver, clear_fbik_callbacks
+from .fbik_solver import (FullBodyIKSolver, register_live_fbik_solver, clear_fbik_callbacks,
+                         DEFAULT_SOLVER_SETTINGS, effective_bone_settings)
 
 
 def _sanitize_maya_name(name):
@@ -103,6 +104,18 @@ def _add_bool_attr(node_dag, attr_name, value):
         cmds.addAttr(node_dag, longName=attr_name, attributeType="bool", keyable=False)
     cmds.setAttr("{}.{}".format(node_dag, attr_name), bool(value))
     cmds.setAttr("{}.{}".format(node_dag, attr_name), channelBox=True)
+
+
+def _add_enum_attr(node, name, labels, value):
+    cmds.addAttr(node,longName=name,attributeType='enum',enumName=':'.join(labels),keyable=True)
+    cmds.setAttr(node+'.'+name,value)
+
+
+def _add_triple_attr(node, name, values, integer=False):
+    kind='long' if integer else 'double'
+    cmds.addAttr(node,longName=name,attributeType=kind+'3')
+    for axis in 'XYZ':cmds.addAttr(node,longName=name+axis,attributeType=kind,parent=name,keyable=True)
+    cmds.setAttr(node+'.'+name,*values,type=kind+'3')
 
 
 def _set_outliner_color(node_dag, rgb):
@@ -223,9 +236,12 @@ class IKRigAsset(object):
                     "solver_type": "FIKRigFullBodyIKSolver",
                     "root_bone": prof["pelvis_bone"],
                     "root_bone_dag": prof["pelvis_bone_dag"],
-                    "root_behavior": "PinToInput",
-                    "allow_stretch": False,
-                    "bone_settings": prof["fbik_bone_settings"],
+                    **DEFAULT_SOLVER_SETTINGS,
+                    **prof.get("fbik_solver_settings", {}),
+                    "bone_settings": {name:effective_bone_settings(value) for name,value in prof["fbik_bone_settings"].items()},
+                    "goal_settings": {g['goal_name']:{'chain_depth':g.get('chain_depth',2),
+                        'strength_alpha':g.get('strength_alpha',1.0),'pull_chain_alpha':g.get('pull_chain_alpha',1.0),
+                        'pin_rotation':g.get('pin_rotation',1.0)} for g in prof['ik_goals']},
                 }
             ],
             "bones_to_exclude_from_auto_pose": prof["bones_to_exclude_from_auto_pose"],
@@ -439,15 +455,8 @@ class MayaSceneAssetBuilder(object):
         clear_fbik_callbacks("Src_" + src_tag)
         clear_fbik_callbacks("Tgt_" + tgt_tag)
 
-        # Reset Source A to its pristine bind pose and Target B to its aligned Retarget Pose
-        for idx, j in enumerate(processor.source_skeleton.joint_names):
-            if idx == 0:
-                set_world_transform(j, processor.source_skeleton.rest_world_pos[j], processor.source_skeleton.rest_world_rot[j])
-            else:
-                set_world_transform(j, quat=processor.source_skeleton.rest_world_rot[j])
-
-        if apply_aligned_pose_to_target:
-            processor.target_pose_mgr.apply_aligned_pose_to_scene()
+        # Reference / retarget-pose offsets belong to the DG solver. Writing
+        # joint channels here changes animation keys on connected skeletons.
 
         top_grp_dag = "|" + cls.CONTAINER_GRP
         if not cmds.objExists(top_grp_dag):
@@ -657,31 +666,7 @@ class MayaSceneAssetBuilder(object):
 
         pelvis_dag = prof["pelvis_bone_dag"]
         pelvis_pos = pose_mgr.get_aligned_rest_position(pelvis_dag) if pose_mgr else skel.rest_world_pos.get(pelvis_dag, om.MVector(0, 90, 0))
-        pelvis_rot = pose_mgr.get_aligned_rest_rotation(pelvis_dag) if pose_mgr else skel.rest_world_rot.get(pelvis_dag, om.MQuaternion.kIdentity)
         loc_scale = max(3.5, abs(pelvis_pos.y) * 0.075)
-
-        # Create Pelvis Root FBIK Control Locator (allows crouching / shifting hips with hands & feet pinned!)
-        pelvis_loc_name = "Goal_{}_PelvisRoot".format(tag)
-        pelvis_loc = cmds.spaceLocator(name=pelvis_loc_name)[0]
-        pelvis_loc_dag = cmds.ls(pelvis_loc, long=True)[0]
-        pelvis_loc_dag = cmds.ls(cmds.parent(pelvis_loc_dag, goals_grp)[0], long=True)[0]
-        set_world_transform(pelvis_loc_dag, pelvis_pos, pelvis_rot)
-        for s in cmds.listRelatives(pelvis_loc_dag, shapes=True, fullPath=True) or []:
-            cmds.setAttr(s + ".localScaleX", loc_scale * 1.35)
-            cmds.setAttr(s + ".localScaleY", loc_scale * 1.35)
-            cmds.setAttr(s + ".localScaleZ", loc_scale * 1.35)
-        _set_wire_color(pelvis_loc_dag, (1.0, 0.45, 0.1), line_width=2.5)
-        _set_outliner_color(pelvis_loc_dag, (1.0, 0.55, 0.2))
-        _add_str_attr(pelvis_loc_dag, "goalName", "PelvisRoot")
-        _add_str_attr(pelvis_loc_dag, "boneName", prof["pelvis_bone"])
-        _add_str_attr(pelvis_loc_dag, "boneDAG", pelvis_dag)
-        if not cmds.attributeQuery("drivenBone", node=pelvis_loc_dag, exists=True):
-            cmds.addAttr(pelvis_loc_dag, longName="drivenBone", attributeType="message")
-        try:
-            cmds.connectAttr(pelvis_dag + ".message", pelvis_loc_dag + ".drivenBone", force=True)
-        except Exception:
-            pass
-        fbik_solver.register_pelvis_locator(pelvis_loc_dag)
 
         # Create the 4 Limb IK Effector Goal Locators (LeftHandIK, RightHandIK, LeftFootIK, RightFootIK)
         for g_info in prof["ik_goals"]:
@@ -710,6 +695,10 @@ class MayaSceneAssetBuilder(object):
             _add_str_attr(loc_dag, "chainName", g_info["chain_name"])
             _add_float_attr(loc_dag, "positionAlpha", g_info.get("position_alpha", 1.0), keyable=True)
             _add_float_attr(loc_dag, "rotationAlpha", g_info.get("rotation_alpha", 1.0), keyable=True)
+            for attr in ['strengthAlpha','pullChainAlpha','pinRotation']:
+                _add_float_attr(loc_dag,attr,g_info.get({'strengthAlpha':'strength_alpha','pullChainAlpha':'pull_chain_alpha','pinRotation':'pin_rotation'}[attr],1.0),keyable=True)
+            _add_int_attr(loc_dag,'chainDepth',g_info.get('chain_depth',2))
+            _add_enum_attr(loc_dag,'previewMode',['Additive','Absolute'],0)
 
             if not cmds.attributeQuery("drivenBone", node=loc_dag, exists=True):
                 cmds.addAttr(loc_dag, longName="drivenBone", attributeType="message")
@@ -721,16 +710,22 @@ class MayaSceneAssetBuilder(object):
             fbik_solver.register_goal_locator(g_name, loc_dag, b_dag)
 
         # ----------------------------------------------------------------------
-        # 3. Sub-group: FBIKSolverSettings + Register Live FBIK Callbacks & DG Expression
+        # 3. Sub-group: FBIKSolverSettings + connect the live PBIK DG node
         # ----------------------------------------------------------------------
         fbik_grp = cls._recreate_child_group(
             asset_node_dag, "FBIKSolver_{}".format(tag)
         )
-        _add_str_attr(fbik_grp, "solverType", "FIKRigFullBodyIKSolver (Live Interactive)")
+        _add_str_attr(fbik_grp, "solverType", "UE 5.8 PBIK (Native / Maya DG)")
         _add_str_attr(fbik_grp, "rootBone", prof["pelvis_bone"])
         _add_str_attr(fbik_grp, "rootBoneDAG", prof["pelvis_bone_dag"])
-        _add_str_attr(fbik_grp, "rootBehavior", "PinToInput")
-        _add_bool_attr(fbik_grp, "allowStretch", False)
+        settings=fbik_solver.solver_settings
+        _add_enum_attr(fbik_grp,'rootBehavior',['PrePull','PinToInput','Free'],['PrePull','PinToInput','Free'].index(settings['root_behavior']))
+        cmds.aliasAttr('rootMode',fbik_grp+'.rootBehavior')
+        _add_bool_attr(fbik_grp, "allowStretch", settings['allow_stretch'])
+        _add_bool_attr(fbik_grp,'enabled',True)
+        for attr,key in [('iterations','iterations'),('subIterations','sub_iterations')]:_add_int_attr(fbik_grp,attr,settings[key])
+        for attr,key in [('massMultiplier','mass_multiplier'),('globalPullChainAlpha','global_pull_chain_alpha'),('maxAngle','max_angle'),('overRelaxation','over_relaxation')]:
+            _add_float_attr(fbik_grp,attr,settings[key])
 
         for b_clean, settings in prof.get("fbik_bone_settings", {}).items():
             b_node_name = "FBIKBone_{}_{}".format(tag, _sanitize_maya_name(b_clean))
@@ -745,12 +740,20 @@ class MayaSceneAssetBuilder(object):
                     cmds.connectAttr(b_dag + ".message", b_node_dag + ".connectedBone", force=True)
                 except Exception:
                     pass
-            if "rotation_stiffness" in settings:
-                _add_float_attr(b_node_dag, "rotationStiffness", settings["rotation_stiffness"])
+            effective=effective_bone_settings(settings)
+            _add_float_attr(b_node_dag, "rotationStiffness", effective.get('rotation_stiffness',0.))
+            _add_float_attr(b_node_dag, "positionStiffness", effective.get('position_stiffness',0.))
+            _add_triple_attr(b_node_dag,'limits',[{'Free':0,'Limited':1,'Locked':2}[v] for v in effective['limits']],integer=True)
+            _add_triple_attr(b_node_dag,'minimum',effective['minimum'])
+            _add_triple_attr(b_node_dag,'maximum',effective['maximum'])
+            _add_triple_attr(b_node_dag,'preferredAngles',effective['preferred_angles'])
+            _add_bool_attr(b_node_dag,'usePreferredAngles',effective['use_preferred_angles'])
+            _add_bool_attr(b_node_dag,'isExcluded',effective.get('excluded',False))
+            if 'pole_reference' in settings:
+                _add_str_attr(b_node_dag,'poleDirectionSource',settings['pole_reference']['source'])
+                _add_bool_attr(b_node_dag,'preferredAngleCalibrated',settings.get('pole_calibration',{}).get('calibrated',False))
             if "preferred_axis" in settings:
                 _add_str_attr(b_node_dag, "preferredAnglesAxis", settings["preferred_axis"])
-            if "excluded" in settings:
-                _add_bool_attr(b_node_dag, "isExcluded", settings["excluded"])
 
         # Activate real-time Full-Body IK evaluation when dragging any Goal locator
         register_live_fbik_solver(fbik_solver, fbik_grp)
@@ -921,6 +924,19 @@ class ThreeAssetLoader(object):
         src_skel = processor.source_skeleton
         tgt_skel = processor.target_skeleton
         tgt_pose = processor.target_pose_mgr
+
+        # Preserve the FBIK settings serialized with each IK Rig. Previously
+        # loading assets restored reference poses but silently used template
+        # solver / Goal settings again.
+        for profile,asset in [(processor.source_profile,src_ikrig_dict),(processor.target_profile,tgt_ikrig_dict)]:
+            if not profile or not asset or not asset.get('solvers'):
+                continue
+            settings=asset['solvers'][0]
+            profile['fbik_solver_settings']={key:settings.get(key,value) for key,value in DEFAULT_SOLVER_SETTINGS.items()}
+            profile['fbik_bone_settings']={name:dict(value) for name,value in settings.get('bone_settings',{}).items()}
+            by_goal=settings.get('goal_settings',{})
+            for goal in profile.get('ik_goals',[]):
+                goal.update(by_goal.get(goal['goal_name'],{}))
 
         # 1. Restore Source A reference pose from IK_AutoGeneratedSource
         if src_ikrig_dict and "skeleton" in src_ikrig_dict:

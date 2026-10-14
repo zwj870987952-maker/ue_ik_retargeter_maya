@@ -9,6 +9,7 @@ Implements InvRootModification (ground locking) and VectorPlaneProject pole vect
 import math
 import maya.api.OpenMaya as om
 from .math_utils import quat_between_vectors, slerp, rotate_vector_by_quat
+from .pole_vector import bend_measure, build_reference, choose_direction, resolve_reference, RELIABLE_DEGREES
 
 
 class TwoBoneIKSolver(object):
@@ -25,7 +26,8 @@ class TwoBoneIKSolver(object):
         effector_pos, effector_rot,
         joint_target_hint,
         upper_len, lower_len,
-        end_rot_blend=1.0
+        end_rot_blend=1.0,
+        reference_pole_direction=None
     ):
         """
         Solves Two-Bone IK matching UE 5.8 AnimationCore::SolveTwoBoneIK.
@@ -58,7 +60,12 @@ class TwoBoneIKSolver(object):
             joint_bend_dir = None
 
         if joint_bend_dir is None:
-            if fk_plane_normal.length() > 1e-4:
+            if reference_pole_direction is not None:
+                chosen=choose_direction(list(root_pos),list(joint_pos),list(end_pos),list(reference_pole_direction))
+                reference=om.MVector(*chosen['direction'])
+                projected=reference-desired_dir*(reference*desired_dir)
+                joint_bend_dir=projected.normal() if projected.length()>1e-8 else reference
+            elif fk_plane_normal.length() > 1e-4:
                 joint_bend_dir = (fk_plane_normal.normal() ^ desired_dir).normal()
             else:
                 ortho = om.MVector(0.0, 0.0, 1.0) ^ desired_dir
@@ -176,6 +183,17 @@ class IKChainSolver(object):
             self.tgt_aligned_end_rot = self.tgt_chain.skeleton.rest_world_rot[self.tgt_chain.end_bone]
 
         self.tgt_initial_limb_length = max(1e-4, (tgt_end_pos - tgt_start_pos).length())
+        self.src_pole_reference=build_reference(self.src_chain)
+        positions={n:self.target_pose_mgr.get_aligned_rest_position(n) for n in self.tgt_chain.skeleton.joint_names} if self.target_pose_mgr else None
+        rotations={n:self.target_pose_mgr.get_aligned_rest_rotation(n) for n in self.tgt_chain.skeleton.joint_names} if self.target_pose_mgr else None
+        self.tgt_pole_reference=build_reference(self.tgt_chain,positions,rotations)
+
+    def pole_direction(self,pose,source=True):
+        reference=self.src_pole_reference if source else self.tgt_pole_reference
+        if not reference:return None
+        a,b,c=reference['bones']
+        result=resolve_reference(reference,list(pose[a][0]),list(pose[b][0]),list(pose[c][0]),list(pose[a][1]))
+        return om.MVector(*result['direction']) if result['orientation_known'] else None
 
     def calculate_goal_transform(self, source_current_pose_dict, target_current_start_pos, pelvis_translation_delta=None, affect_ik_vertical=True):
         """
@@ -234,7 +252,9 @@ class AlignPoleVectorSolver(object):
         src_p0, src_p1, src_p2,
         tgt_p0, tgt_p1, tgt_p2,
         tgt_r0, tgt_r1,
-        alpha=1.0
+        alpha=1.0,
+        src_reference_direction=None,
+        tgt_reference_direction=None
     ):
         """
         Computes axial roll rotation around `tgt_p2 - tgt_p0` to align `(tgt_p1 - tgt_p0)_perp`
@@ -258,12 +278,15 @@ class AlignPoleVectorSolver(object):
         src_pole = src_mid - src_axis * (src_mid * src_axis)
         tgt_pole = tgt_mid - tgt_axis * (tgt_mid * tgt_axis)
 
-        # Only align when both source and target limbs have a meaningful bend (> 0.5 cm)
-        if src_pole.length() < 0.5 or tgt_pole.length() < 0.5:
+        # Collinear joints need a captured anatomical plane. Avoid inventing
+        # a direction when callers supply neither reference nor usable bend.
+        if src_reference_direction is None and bend_measure(list(src_p0),list(src_p1),list(src_p2))['angle_degrees']<RELIABLE_DEGREES:
             return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
-
-        src_pole_dir = src_pole.normal()
-        tgt_pole_dir = tgt_pole.normal()
+        if tgt_reference_direction is None and bend_measure(list(tgt_p0),list(tgt_p1),list(tgt_p2))['angle_degrees']<RELIABLE_DEGREES:
+            return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
+        src_choice=choose_direction(list(src_p0),list(src_p1),list(src_p2),list(src_reference_direction if src_reference_direction is not None else src_pole))
+        tgt_choice=choose_direction(list(tgt_p0),list(tgt_p1),list(tgt_p2),list(tgt_reference_direction if tgt_reference_direction is not None else tgt_pole))
+        src_pole_dir=om.MVector(*src_choice['direction']);tgt_pole_dir=om.MVector(*tgt_choice['direction'])
 
         # Project source pole direction onto the plane orthogonal to tgt_axis
         desired_pole = src_pole_dir - tgt_axis * (src_pole_dir * tgt_axis)
@@ -271,8 +294,11 @@ class AlignPoleVectorSolver(object):
             return tgt_r0, tgt_r1, tgt_p1, om.MQuaternion.kIdentity
         desired_pole_dir = desired_pole.normal()
 
-        q_full = quat_between_vectors(tgt_pole_dir, desired_pole_dir)
-        q_roll = slerp(om.MQuaternion.kIdentity, q_full, alpha).normal() if alpha < 1.0 - 1e-4 else q_full
+        # Signed roll about the limb chord also resolves a 180deg reversal.
+        # A generic shortest-arc quaternion can choose another axis at 180deg
+        # and move the foot away from its pinned position.
+        roll=math.atan2(tgt_axis*(tgt_pole_dir ^ desired_pole_dir),tgt_pole_dir*desired_pole_dir)
+        q_roll=om.MQuaternion(roll*max(0.,min(1.,alpha)),tgt_axis).normal()
 
         new_r0 = (tgt_r0 * q_roll).normal()
         new_r1 = (tgt_r1 * q_roll).normal()

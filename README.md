@@ -1,6 +1,16 @@
 # UE5 IK Retargeter for Autodesk Maya
 
-一套基于虚幻引擎 5（UE5）**IK Rig & IK Retargeter** 核心架构与数学解算体系，完全自研移植并落地在 **Autodesk Maya** 中的高质量动画重定向插件系统。
+当前 UE 5.8 全身 IK 实现在 `ue58_three_assets_v2/`。使用该目录的
+`launch_in_maya.py` 启动。全身求解已改为独立 UE 5.8 PBIK 核心和 Maya DG
+矩阵节点，默认使用 Free、20/10 次迭代及 ChainDepth=2，并保留原有动画通道。
+默认只生成左右手、左右脚四个 Goal；骨盆保留为求解根，不再生成 PelvisRoot
+拖点或叠加额外骨盆输入偏移。
+首次编译需要本机 UE 5.8 源码和 Visual C++ x64 Build Tools；运行时不需要
+打开 UE 编辑器。构建方式和坐标转换说明见
+[native/README.md](ue58_three_assets_v2/ue_ik_retargeter_maya/native/README.md)。
+
+一套基于虚幻引擎 5（UE5）**IK Rig & IK Retargeter** 架构、PBIK 源码适配与
+Maya 矩阵驱动的动画重定向插件系统。
 
 ---
 

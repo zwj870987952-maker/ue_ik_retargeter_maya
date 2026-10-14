@@ -1,0 +1,478 @@
+{
+  "maya_version": "2024",
+  "solvers": [
+    {
+      "solver": "Src_CC_Base_BoneRoot",
+      "profile": "Reallusion_CC4",
+      "tests": [
+        {
+          "name": "rest",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 7.970759588254665e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "LeftHandIK": {
+              "position_cm": 3.156834004119716e-13,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 2.551194917316023e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 5.913561019254596e-14,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 4.128700005821884,
+          "root_position_delta_cm": 5.560011352026726e-17
+        },
+        {
+          "name": "left_hand_forward_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.0014709130205930233,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 1.8301504986212034,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 0.006330018790364538,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 1.7556939026285245,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 4.054199991514906,
+          "root_position_delta_cm": 0.2856174464354186
+        },
+        {
+          "name": "left_hand_forward_60",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.018892405354686805,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 12.41033768776092,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 0.06508577832322784,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "RightHandIK": {
+              "position_cm": 9.062260056913999,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 3.9948000048752874,
+          "root_position_delta_cm": 2.3007401361766378
+        },
+        {
+          "name": "left_foot_up_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.02236003131100208,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 0.026064419666452808,
+              "rotation_degrees": 1.7075472925031877e-06
+            },
+            "RightFootIK": {
+              "position_cm": 0.23389969039297281,
+              "rotation_degrees": 1.7075472925031877e-06
+            },
+            "RightHandIK": {
+              "position_cm": 0.02589448900200488,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 4.360499995527789,
+          "root_position_delta_cm": 0.2767742236661676
+        },
+        {
+          "name": "hand_rotation_60_alpha_half",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 7.970759588254665e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "LeftHandIK": {
+              "position_cm": 3.178884740892812e-13,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 2.551194917316023e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 5.913561019254596e-14,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 4.2972999945050105,
+          "root_position_delta_cm": 5.560011352026726e-17
+        },
+        {
+          "name": "foot_rotation_60_alpha_half",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 9.417230803320682e-14,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 3.156834004119716e-13,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 2.551194917316023e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 5.913561019254596e-14,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 3.9671000122325495,
+          "root_position_delta_cm": 5.560011352026726e-17
+        },
+        {
+          "name": "rotation_only_position_alpha_zero",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 7.970759588254665e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "LeftHandIK": {
+              "position_cm": 3.158133164225476e-13,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 2.551194917316023e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 5.913561019254596e-14,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 3.956899992772378,
+          "root_position_delta_cm": 5.560011352026726e-17
+        },
+        {
+          "name": "absolute_hand_forward_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.0014709130205930233,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 1.830150498621204,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 0.006330018790364538,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 1.7556939026285245,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 3.9856999937910587,
+          "root_position_delta_cm": 0.2856174464354186
+        },
+        {
+          "name": "pin_root_hand_forward_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 7.970759588254665e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "LeftHandIK": {
+              "position_cm": 1.9195431698765677,
+              "rotation_degrees": 1.7075472925031877e-06
+            },
+            "RightFootIK": {
+              "position_cm": 2.551194917316023e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 1.685043430780612,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 3.9532999944640324,
+          "root_position_delta_cm": 5.560011352026726e-17
+        }
+      ],
+      "stiffness_0_to_1_max_joint_difference_cm": 12.912315607052461,
+      "checks": {
+        "rest_position": true,
+        "unmoved_right_hand": true,
+        "rotation_alphas": true,
+        "stiffness_changes_pose": true,
+        "pin_root": true,
+        "positive_solve_time": true
+      }
+    },
+    {
+      "solver": "Tgt_mixamorig_Hips",
+      "profile": "Mixamo",
+      "tests": [
+        {
+          "name": "rest",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 2.5455116420428186e-14,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 3.4226603927434366e-13,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 5.479791384419142e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 3.463041713814956e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            }
+          },
+          "solve_ms": 3.0318999924929813,
+          "root_position_delta_cm": 4.440892107297498e-16
+        },
+        {
+          "name": "left_hand_forward_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.0026025574646443644,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 1.417315446161815,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 0.007810552303484603,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 1.7388862354746575,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 4.378300000098534,
+          "root_position_delta_cm": 0.35524129405656973
+        },
+        {
+          "name": "left_hand_forward_60",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.039186899053614485,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 9.825194468791944,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 0.09020506422361231,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 9.896226139631285,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 3.1149999995250255,
+          "root_position_delta_cm": 2.934299716968728
+        },
+        {
+          "name": "left_foot_up_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.021829427843144046,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 0.021348818999291017,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "RightFootIK": {
+              "position_cm": 0.19954087645470664,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 0.021307489688151354,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 2.9882999951951206,
+          "root_position_delta_cm": 0.2693145883276792
+        },
+        {
+          "name": "hand_rotation_60_alpha_half",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 2.5455116420428186e-14,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 3.706599575273766e-13,
+              "rotation_degrees": 2.4148365394514667e-06
+            },
+            "RightFootIK": {
+              "position_cm": 5.479791384419142e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 3.463041713814956e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            }
+          },
+          "solve_ms": 3.031100000953302,
+          "root_position_delta_cm": 4.440892107297498e-16
+        },
+        {
+          "name": "foot_rotation_60_alpha_half",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 2.5563352251105482e-14,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 3.4226603927434366e-13,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 5.479791384419142e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 3.463041713814956e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            }
+          },
+          "solve_ms": 2.9134000069461763,
+          "root_position_delta_cm": 4.440892107297498e-16
+        },
+        {
+          "name": "rotation_only_position_alpha_zero",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 2.5455116420428186e-14,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 3.7069108202878896e-13,
+              "rotation_degrees": 3.4150945850063755e-06
+            },
+            "RightFootIK": {
+              "position_cm": 5.479791384419142e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 3.463041713814956e-14,
+              "rotation_degrees": 2.4148365394514667e-06
+            }
+          },
+          "solve_ms": 2.988600012031384,
+          "root_position_delta_cm": 4.440892107297498e-16
+        },
+        {
+          "name": "absolute_hand_forward_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 0.002614175591933741,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 1.417500393604259,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 0.0077892850631417826,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 1.7385769014517554,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 2.9387999966274947,
+          "root_position_delta_cm": 0.3552829354384327
+        },
+        {
+          "name": "pin_root_hand_forward_20",
+          "residuals": {
+            "LeftFootIK": {
+              "position_cm": 2.521966357400679e-14,
+              "rotation_degrees": 0.0
+            },
+            "LeftHandIK": {
+              "position_cm": 1.505963472465112,
+              "rotation_degrees": 0.0
+            },
+            "RightFootIK": {
+              "position_cm": 5.479791384419142e-14,
+              "rotation_degrees": 0.0
+            },
+            "RightHandIK": {
+              "position_cm": 1.6696723807118108,
+              "rotation_degrees": 0.0
+            }
+          },
+          "solve_ms": 2.923400010331534,
+          "root_position_delta_cm": 4.440892107297498e-16
+        }
+      ],
+      "stiffness_0_to_1_max_joint_difference_cm": 29.638811233649427,
+      "checks": {
+        "rest_position": true,
+        "unmoved_right_hand": true,
+        "rotation_alphas": true,
+        "stiffness_changes_pose": true,
+        "pin_root": true,
+        "positive_solve_time": true
+      }
+    }
+  ],
+  "animation_input": {
+    "samples": [
+      {
+        "frame": 1,
+        "parent_translation_y": 0,
+        "position_error_cm": 0.0
+      },
+      {
+        "frame": 2,
+        "parent_translation_y": 0,
+        "position_error_cm": 0.0
+      },
+      {
+        "frame": 2,
+        "parent_translation_y": 5,
+        "position_error_cm": 0.0
+      }
+    ],
+    "cycles": [],
+    "checks": {
+      "animated_input_and_parent_motion": true,
+      "no_dependency_cycle": true,
+      "legacy_pelvis_input_has_no_effect": true
+    }
+  },
+  "animation_preserved": true,
+  "joint_channels_preserved": true,
+  "maya_errors": [],
+  "passed": true
+}

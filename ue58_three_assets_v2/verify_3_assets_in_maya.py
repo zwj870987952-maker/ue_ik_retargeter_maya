@@ -22,10 +22,16 @@ def _ensure_v2_package_path():
     else:
         v2_root = r"c:/Users/zwj87/Documents/逆向/ue_ik_retargeter_maya/ue58_three_assets_v2"
 
-    # Evict any cached ue_ik_retargeter_maya modules loaded from an older folder
-    for mod_name in list(sys.modules.keys()):
-        if mod_name == "ue_ik_retargeter_maya" or mod_name.startswith("ue_ik_retargeter_maya."):
-            del sys.modules[mod_name]
+    package = sys.modules.get("ue_ik_retargeter_maya")
+    loaded_root = os.path.dirname(getattr(package, "__file__", ""))
+    expected_root = os.path.join(v2_root, "ue_ik_retargeter_maya")
+    if package and os.path.normcase(os.path.abspath(loaded_root)) != os.path.normcase(os.path.abspath(expected_root)):
+        old_solver = sys.modules.get("ue_ik_retargeter_maya.core.fbik_solver")
+        if old_solver and hasattr(old_solver, "clear_fbik_callbacks"):
+            old_solver.clear_fbik_callbacks()
+        for mod_name in list(sys.modules):
+            if mod_name == "ue_ik_retargeter_maya" or mod_name.startswith("ue_ik_retargeter_maya."):
+                del sys.modules[mod_name]
 
     if v2_root in sys.path:
         sys.path.remove(v2_root)
@@ -37,6 +43,7 @@ def _ensure_v2_package_path():
 def run_generate_three_assets(apply_aligned_pose=True):
     _ensure_v2_package_path()
     import ue_ik_retargeter_maya
+    importlib.reload(ue_ik_retargeter_maya)
     return ue_ik_retargeter_maya.generate_retarget_assets(
         build_in_scene=True,
         apply_aligned_pose=apply_aligned_pose,

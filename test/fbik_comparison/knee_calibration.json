@@ -1,0 +1,170 @@
+{
+  "Src_CC_Base_BoneRoot": {
+    "L_Calf": {
+      "before": [
+        -90.0,
+        0.0,
+        0.0
+      ],
+      "after": [
+        -90.0,
+        0.0,
+        0.0
+      ],
+      "reference": {
+        "bones": [
+          "|CC_Base_BoneRoot|CC_Base_Hip|CC_Base_Pelvis|CC_Base_L_Thigh",
+          "|CC_Base_BoneRoot|CC_Base_Hip|CC_Base_Pelvis|CC_Base_L_Thigh|CC_Base_L_Calf",
+          "|CC_Base_BoneRoot|CC_Base_Hip|CC_Base_Pelvis|CC_Base_L_Thigh|CC_Base_L_Calf|CC_Base_L_Foot"
+        ],
+        "local_direction": [
+          -0.12297240335059205,
+          0.014460567724201727,
+          0.9923047314183648
+        ],
+        "local_chord": [
+          -0.004807852386551844,
+          0.9998734201425644,
+          -0.015166682163268618
+        ],
+        "source": "foot_to_toe",
+        "orientation_known": true,
+        "bind_angle_degrees": 0.9348086968773673
+      },
+      "calibration": {
+        "angles": [
+          -90.0,
+          0.0,
+          0.0
+        ],
+        "flipped": false,
+        "predicted_alignment": 0.9906363148543162
+      }
+    },
+    "R_Calf": {
+      "before": [
+        -90.0,
+        0.0,
+        0.0
+      ],
+      "after": [
+        -90.0,
+        0.0,
+        0.0
+      ],
+      "reference": {
+        "bones": [
+          "|CC_Base_BoneRoot|CC_Base_Hip|CC_Base_Pelvis|CC_Base_R_Thigh",
+          "|CC_Base_BoneRoot|CC_Base_Hip|CC_Base_Pelvis|CC_Base_R_Thigh|CC_Base_R_Calf",
+          "|CC_Base_BoneRoot|CC_Base_Hip|CC_Base_Pelvis|CC_Base_R_Thigh|CC_Base_R_Calf|CC_Base_R_Foot"
+        ],
+        "local_direction": [
+          0.11869926989593822,
+          0.014528017318461262,
+          0.9928239622606646
+        ],
+        "local_chord": [
+          0.005190163522681111,
+          0.9998702163138448,
+          -0.015251646832863619
+        ],
+        "source": "foot_to_toe",
+        "orientation_known": true,
+        "bind_angle_degrees": 0.9691442409775134
+      },
+      "calibration": {
+        "angles": [
+          -90.0,
+          0.0,
+          0.0
+        ],
+        "flipped": false,
+        "predicted_alignment": 0.99112019467537
+      }
+    }
+  },
+  "Tgt_mixamorig_Hips": {
+    "LeftLeg": {
+      "before": [
+        90.0,
+        0.0,
+        0.0
+      ],
+      "after": [
+        -90.0,
+        -0.0,
+        -0.0
+      ],
+      "reference": {
+        "bones": [
+          "|mixamorig:Hips|mixamorig:LeftUpLeg",
+          "|mixamorig:Hips|mixamorig:LeftUpLeg|mixamorig:LeftLeg",
+          "|mixamorig:Hips|mixamorig:LeftUpLeg|mixamorig:LeftLeg|mixamorig:LeftFoot"
+        ],
+        "local_direction": [
+          2.0748259538712007e-07,
+          0.039479604879328126,
+          0.9992203764928582
+        ],
+        "local_chord": [
+          -2.120105817674923e-08,
+          0.9992203764928794,
+          -0.0394796048793246
+        ],
+        "source": "foot_to_toe",
+        "orientation_known": true,
+        "bind_angle_degrees": 4.5172513752511385
+      },
+      "calibration": {
+        "angles": [
+          -90.0,
+          -0.0,
+          -0.0
+        ],
+        "flipped": true,
+        "predicted_alignment": -0.9990448674614926
+      }
+    },
+    "RightLeg": {
+      "before": [
+        90.0,
+        0.0,
+        0.0
+      ],
+      "after": [
+        -90.0,
+        -0.0,
+        -0.0
+      ],
+      "reference": {
+        "bones": [
+          "|mixamorig:Hips|mixamorig:RightUpLeg",
+          "|mixamorig:Hips|mixamorig:RightUpLeg|mixamorig:RightLeg",
+          "|mixamorig:Hips|mixamorig:RightUpLeg|mixamorig:RightLeg|mixamorig:RightFoot"
+        ],
+        "local_direction": [
+          2.540168512915379e-07,
+          0.03950117103631447,
+          0.9992195241720886
+        ],
+        "local_chord": [
+          -2.1235524895874203e-08,
+          0.999219524172121,
+          -0.039501171036310616
+        ],
+        "source": "foot_to_toe",
+        "orientation_known": true,
+        "bind_angle_degrees": 4.519725679310292
+      },
+      "calibration": {
+        "angles": [
+          -90.0,
+          -0.0,
+          -0.0
+        ],
+        "flipped": true,
+        "predicted_alignment": -0.9990448697537506
+      }
+    }
+  }
+}
