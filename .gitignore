@@ -11,7 +11,9 @@ ue58_three_assets_v2/ue_ik_retargeter_maya/native/bin/
 # Local Maya sessions and generated asset exports
 .dcc-mcp/
 test/test_maya.ma
+test/incrementalSave/
 test/retarget_assets/
+test/cache_workflow_assets/
 test/fbik_comparison/original_animation_curves.ma
 test/fbik_comparison/maya_assets/
 test/fbik_comparison/maya_*.png

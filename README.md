@@ -1,5 +1,10 @@
 # UE5 IK Retargeter for Autodesk Maya
 
+新增独立的 **全身 IK / Pose 书签 / 分段节奏** 工具：将
+`ue58_three_assets_v2/launch_animation_workbench.py` 拖入 Maya 视口安装并启动。
+支持控制器动画、两种 IK 删除方式、自动与手动书签、整帧左右 hold、按过渡段百分比
+设置缓冲和预备，以及各效果独立强度。见 [使用说明](docs/ANIMATION_WORKBENCH.md)。
+
 当前 UE 5.8 全身 IK 实现在 `ue58_three_assets_v2/`。使用该目录的
 `launch_in_maya.py` 启动。全身求解已改为独立 UE 5.8 PBIK 核心和 Maya DG
 矩阵节点，默认使用 Free、20/10 次迭代及 ChainDepth=2，并保留原有动画通道。
@@ -11,6 +16,21 @@
 
 一套基于虚幻引擎 5（UE5）**IK Rig & IK Retargeter** 架构、PBIK 源码适配与
 Maya 矩阵驱动的动画重定向插件系统。
+
+当前动画入口使用隔离的 A/B 缓存工作流：先在参考姿势下生成 `.rig.ma` 与
+`.rtg.json`，生成后原场景保持不变。给原 A 添加动画，再点击重定向；工具
+导入缓存，把 A 的输入动画复制到缓存 A，通过骨盆 / FK / 可选目标 PBIK
+计算缓存 B，并将结果烘焙到原 B。测试阶段默认保留两套系统，可单独删除，
+也可调整后重新烘焙。原 A 动画不改写，原 B 不依赖缓存节点。
+
+界面可以应用 UE 导出的 RTG 配置快照，另存带相同参考姿势、局部姿态偏移、
+链映射和开关的缓存。源动画默认直接进入重定向；源 IK 保留供手动启用编辑。
+目标 IK 按 RTG 的 `Run IK Rig` 开关执行。当前 UE 测试资产关闭该 Op，因此
+对应预览使用骨盆与 FK，打开选项后才对完整目标姿态执行一次 PBIK。
+
+CC4 → Mixamo 购物动作的 UE 实际输出比较、缓存删除验证和复跑方法见
+[缓存工作流验证](test/cache_workflow/README.md)。此入口当前支持骨骼 TRS 曲线；
+带动画层、约束或其他占用连接的目标通道会在写动画前报告冲突。
 
 ---
 

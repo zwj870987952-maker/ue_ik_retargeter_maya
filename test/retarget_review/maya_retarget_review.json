@@ -1,0 +1,108 @@
+{
+  "scene": "C:/Users/Administrator/Documents/GitHub/ue_ik_retargeter_maya/test/test_maya.ma",
+  "original_frame": 2.0,
+  "original_curves": 159,
+  "varying_original_curves": 0,
+  "auto_key_enabled": true,
+  "cases": {
+    "reference_without_dg": {
+      "calls": {
+        "native": 0,
+        "two_bone": 4
+      },
+      "maximum_rotation_difference_degrees": 6.830189170012753e-06,
+      "pelvis_position_difference_cm": 0.0
+    },
+    "synthetic_motion_without_dg": {
+      "calls": {
+        "native": 0,
+        "two_bone": 4
+      },
+      "maximum_rotation_difference_degrees": 6.830189170012753e-06,
+      "pelvis_position_difference_cm": 0.0
+    },
+    "preview_on_animated_target": {
+      "calls": {
+        "native": 0,
+        "two_bone": 4
+      },
+      "maximum_rotation_difference_degrees": 6.830189170012753e-06,
+      "pelvis_position_difference_cm": 0.0
+    },
+    "synthetic_motion_with_dg": {
+      "calls": {
+        "native": 70,
+        "two_bone": 4
+      },
+      "maximum_rotation_difference_degrees": 39.45984719089077,
+      "pelvis_position_difference_cm": 2.2729349675604897
+    },
+    "repeat_same_frame_with_dg": {
+      "calls": {
+        "native": 70,
+        "two_bone": 4
+      },
+      "maximum_rotation_difference_degrees": 45.88047934452018,
+      "pelvis_position_difference_cm": 3.623179615859461
+    }
+  },
+  "errors": [],
+  "profiles": [
+    "Reallusion_CC4",
+    "Mixamo"
+  ],
+  "mapped_chains": 21,
+  "serialized_mapping_reload": {
+    "requested_source": "RightArm",
+    "actual_source": "LeftArm",
+    "requested_alpha": 0.123,
+    "actual_alpha": 1.0,
+    "requested_enable_fk": false,
+    "actual_enable_fk": true
+  },
+  "target_keys_during_single_frame_preview": {
+    "before": [
+      0.0,
+      0.0
+    ],
+    "after": [
+      0.0,
+      0.0,
+      1.5733837612819361
+    ],
+    "changed": true
+  },
+  "goal_modes": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bake_with_dg_then_disable": {
+    "maximum_position_difference_cm": 38.57796756227248,
+    "maximum_rotation_difference_degrees": 47.42447724757372
+  },
+  "repeated_cached_preview_at_same_frame": {
+    "pelvis_positions": [
+      [
+        14.8782132191159,
+        104.35995202760604,
+        11.473060812743935
+      ],
+      [
+        29.7564204382318,
+        104.35995202760604,
+        21.391865625487867
+      ],
+      [
+        44.6346276573477,
+        104.35995202760604,
+        31.310670438231803
+      ]
+    ],
+    "first_to_third_position_difference_cm": 35.76275934366725
+  },
+  "original_animation_and_channels_preserved": true,
+  "original_solver_registry_preserved": true,
+  "test_namespace_removed": true
+}

@@ -104,6 +104,12 @@ def slerp(q1, q2, alpha):
     return om.MQuaternion.slerp(q1, q2, alpha)
 
 
+def fast_lerp(q1,q2,alpha):
+    """UE FQuat::FastLerp with shortest arc and explicit normalization."""
+    sign=1. if sum(a*b for a,b in zip(q1,q2))>=0. else -1.
+    return om.MQuaternion(*[(1.-alpha)*a+alpha*sign*b for a,b in zip(q1,q2)]).normal()
+
+
 def lerp_vector(v1, v2, alpha):
     """Linear interpolation between two vectors."""
     return v1 * (1.0 - alpha) + v2 * alpha

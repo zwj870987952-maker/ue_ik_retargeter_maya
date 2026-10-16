@@ -26,6 +26,9 @@ SUBMODULES_ORDER = [
     "ue_ik_retargeter_maya.core.retarget_assets",
     "ue_ik_retargeter_maya.core.retarget_cache",
     "ue_ik_retargeter_maya.core.processor",
+    "ue_ik_retargeter_maya.core.pose_evaluator",
+    "ue_ik_retargeter_maya.core.ue_reference",
+    "ue_ik_retargeter_maya.core.cache_workflow",
     "ue_ik_retargeter_maya.rig_driver.driver",
     "ue_ik_retargeter_maya.batch.batch_baker",
     "ue_ik_retargeter_maya.ui.main_window",
@@ -45,7 +48,8 @@ def reload_plugin():
         else:
             importlib.import_module(mod_name)
 
-    from .core.fbik_scene import reload_node_compute
+    from .core.fbik_scene import reload_node_compute,restore_unknown_solvers
+    restore_unknown_solvers()
     reload_node_compute()
 
     global IKRetargetProcessor, RetargetSkeleton, BoneChain, ChainMapping, AutoCharacterizer
@@ -103,6 +107,29 @@ def generate_retarget_assets(
     )
 
 
+def build_rig_cache(source_root=None,target_root=None,output_dir=None,enable_ik=False,align_poles=False,**kwargs):
+    """Save isolated A/B full-body rigs as .ma + RTG JSON; preserve the scene."""
+    from .core.cache_workflow import build_cache
+    source_root,target_root=IKRetargetProcessor.resolve_source_and_target_from_selection(source_root,target_root)
+    return build_cache(source_root,target_root,output_dir,enable_ik,align_poles,**kwargs)
+
+
+def retarget_cached_animation(cache_path,source_root=None,target_root=None,start=None,end=None,keep_systems=True,**kwargs):
+    from .core.cache_workflow import retarget_from_cache
+    return retarget_from_cache(cache_path,source_root,target_root,start,end,keep_systems,**kwargs)
+
+
+def remove_cached_systems(session_root):
+    from .core.cache_workflow import remove_cached_systems as remove
+    return remove(session_root)
+
+
+def show_animation_workbench():
+    """Open the animated full-body IK and bookmark rhythm editor."""
+    from .animation_workbench import show
+    return show()
+
+
 from .core.processor import IKRetargetProcessor
 from .core.skeleton import RetargetSkeleton
 from .core.chains import BoneChain, ChainMapping, AutoCharacterizer
@@ -132,5 +159,9 @@ __all__ = [
     "reload_plugin",
     "launch",
     "generate_retarget_assets",
+    "build_rig_cache",
+    "retarget_cached_animation",
+    "remove_cached_systems",
+    "show_animation_workbench",
     "show_ui",
 ]

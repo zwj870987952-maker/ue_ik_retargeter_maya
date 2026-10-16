@@ -72,7 +72,9 @@ class UE58PBIKNode(om.MPxNode):
         a=self.attributes
         attr=plug.attribute()
         if attr not in (a['outputOffset'],a['solveMilliseconds']):
-            return om.kUnknownParameter
+            # API 2.0 delegates inherited/unsupported plugs by returning None.
+            # kUnknownParameter is a C++/API 1.0 status, not an API 2.0 symbol.
+            return None
         from ue_ik_retargeter_maya.core.pbik_native import NativePBIKSolver,to_engine_pose,from_engine_pose
         from ue_ik_retargeter_maya.core.math_utils import matrix_to_trs,trs_to_matrix,slerp
         started=time.perf_counter()
@@ -80,7 +82,11 @@ class UE58PBIKNode(om.MPxNode):
         if not text:return
         if text!=self.configuration_text:
             self.config=json.loads(text);self.configuration_text=text;self.signature=None
-        cfg=self.config;count=len(cfg['parents'])
+        cfg=self.config
+        if 'retarget_bundle' in cfg:
+            from ue_ik_retargeter_maya.core.pose_evaluator import compute_cached_node
+            return compute_cached_node(self,plug,data)
+        count=len(cfg['parents'])
         def scalar(name,kind='Double'):
             return getattr(data.inputValue(a[name]),'as'+kind)()
         def array(name,index,kind='Double',default=0.):
@@ -129,8 +135,12 @@ class UE58PBIKNode(om.MPxNode):
                 ip,iq,_=matrix_to_trs(unmodified[g['bone']])
                 mode=array('previewMode',i,'Int',0)
                 if mode==0:
-                    gp=ip+(gp-om.MVector(*g['initial_position']))
-                    gq=(iq*om.MQuaternion(*g['initial_rotation']).inverse()*gq).normal()
+                    initial_p=om.MVector(*g['initial_position']);initial_q=om.MQuaternion(*g['initial_rotation'])
+                    if 'initial_external_parent_matrix' in cfg:
+                        initial=trs_to_matrix(initial_p,initial_q)*om.MMatrix(cfg['initial_external_parent_matrix']).inverse()*external
+                        initial_p,initial_q,_=matrix_to_trs(initial)
+                    gp=ip+(gp-initial_p)
+                    gq=(iq*initial_q.inverse()*gq).normal()
                 pa=max(0.,min(1.,array('positionAlpha',i,default=1.)))
                 ra=max(0.,min(1.,array('rotationAlpha',i,default=1.)))
                 gp=ip+(gp-ip)*pa;gq=slerp(iq,gq,ra).normal()
@@ -144,6 +154,9 @@ class UE58PBIKNode(om.MPxNode):
                 'mass_multiplier':max(0.,scalar('massMultiplier')),'global_pull_chain_alpha':scalar('globalPullChainAlpha'),
                 'max_angle':max(0.,min(180.,scalar('maxAngle'))),'over_relaxation':max(1.,min(2.,scalar('overRelaxation')))}
             solved=self.native.solve(poses,bones,goals,settings)
+            if cfg.get('leg_planes'):
+                from ue_ik_retargeter_maya.core.pole_vector import stabilize_limb_planes
+                solved=stabilize_limb_planes(poses,solved,cfg['leg_planes'],cfg.get('leg_plane_strength',1.))
             solved_world=[]
             for pose in solved:
                 p,q,s=from_engine_pose(pose);solved_world.append(trs_to_matrix(om.MVector(*p),om.MQuaternion(*q),om.MVector(*s)))

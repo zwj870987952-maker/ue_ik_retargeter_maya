@@ -5,7 +5,7 @@ Directly implements UE 5.8's FIKRetargetPelvisMotionOp (PelvisMotionOp.cpp).
 """
 
 import maya.api.OpenMaya as om
-from .math_utils import slerp, lerp_vector
+from .math_utils import slerp, lerp_vector, rotate_vector_by_quat
 
 
 class PelvisMotionSolver(object):
@@ -29,6 +29,18 @@ class PelvisMotionSolver(object):
         self.rotation_alpha = 1.0
         self.affect_ik_horizontal = 1.0
         self.affect_ik_vertical = 1.0
+        self.translation_alpha = 1.0
+        self.source_crotch_offset = 0.0
+        self.target_crotch_offset = 0.0
+        self.use_ground_falloff = False
+        self.ground_falloff_height_percent = .9
+        self.blend_to_source_translation = 0.0
+        self.blend_to_source_translation_weights = [1.,1.,1.]
+        self.translation_offset_local = [0.,0.,0.]
+        self.translation_offset_global = [0.,0.,0.]
+        self.rotation_offset_local = [0.,0.,0.,1.]
+        self.rotation_offset_global = [0.,0.,0.,1.]
+        self.pelvis_translation_delta = om.MVector()
 
         self.update_retarget_pose()
 
@@ -47,8 +59,8 @@ class PelvisMotionSolver(object):
         )
 
         # Height ratio: Target Pelvis Height / Source Pelvis Height
-        src_h = max(1e-3, abs(self.source_initial_pos.y))
-        tgt_h = max(1e-3, abs(self.target_initial_pos.y))
+        src_h = self.source_initial_pos.y if self.source_initial_pos.y > 1e-4 else 1.
+        tgt_h = self.target_initial_pos.y
         self.height_ratio = tgt_h / src_h
         self.height_scale = self.height_ratio
 
@@ -63,35 +75,44 @@ class PelvisMotionSolver(object):
         # --- 1. Rotation Retargeting ---
         rot_delta = (self.source_initial_rot.inverse() * source_current_rot).normal()
         retargeted_rot = (self.target_initial_rot * rot_delta).normal()
+        retargeted_rot = (om.MQuaternion(*self.rotation_offset_local)*retargeted_rot*om.MQuaternion(*self.rotation_offset_global)).normal()
 
         if self.rotation_alpha < 1.0 - 1e-4:
             retargeted_rot = slerp(self.target_initial_rot, retargeted_rot, self.rotation_alpha).normal()
 
         # --- 2. Translation Retargeting ---
         # Scaled Translation:
-        norm_y = source_current_pos.y / max(1e-3, self.source_initial_pos.y)
-        scaled_y = norm_y * self.target_initial_pos.y
-
-        delta_x = (source_current_pos.x - self.source_initial_pos.x) * self.height_ratio * self.scale_horizontal
-        delta_z = (source_current_pos.z - self.source_initial_pos.z) * self.height_ratio * self.scale_horizontal
-        pos_scaled = om.MVector(
-            self.target_initial_pos.x + delta_x,
-            scaled_y * self.scale_vertical,
-            self.target_initial_pos.z + delta_z
-        )
+        pos_scaled = source_current_pos * self.height_ratio
 
         # Absolute Translation:
         abs_delta = source_current_pos - self.source_initial_pos
         pos_absolute = self.target_initial_pos + abs_delta
 
         # Blend between scaled and absolute
-        out_pos = lerp_vector(pos_scaled, pos_absolute, self.blend_to_absolute)
+        weights=self.blend_to_absolute
+        if not isinstance(weights,(list,tuple)):weights=[weights]*3
+        out_pos=om.MVector(*[a+(b-a)*w for a,b,w in zip(pos_scaled,pos_absolute,weights)])
 
         # --- 3. Floor Constraint ---
         if self.floor_constraint_weight > 0.0:
-            if source_current_pos.y < self.source_initial_pos.y:
-                floor_percent = max(0.0, source_current_pos.y / max(1e-3, self.source_initial_pos.y))
-                constrained_y = self.target_initial_pos.y * floor_percent
-                out_pos.y = out_pos.y * (1.0 - self.floor_constraint_weight) + constrained_y * self.floor_constraint_weight
+            if source_current_pos.y <= self.source_initial_pos.y:
+                floor_percent = (source_current_pos.y-self.source_crotch_offset)/max(1.,self.source_initial_pos.y-self.source_crotch_offset)
+                constrained_y = (self.target_initial_pos.y-self.target_crotch_offset)*floor_percent+self.target_crotch_offset
+                weight=self.floor_constraint_weight
+                if self.use_ground_falloff:
+                    falloff=self.target_initial_pos.y*self.ground_falloff_height_percent
+                    weight*=1.-max(0.,min(out_pos.y,falloff))/max(1e-6,falloff)
+                out_pos.y += (constrained_y-out_pos.y)*weight
+
+        # UE records this BEFORE user adjustments. Affect IK subtracts only
+        # adjustment deltas, never the pelvis motion already retargeted above.
+        unmodified=om.MVector(out_pos)
+        out_pos=om.MVector(*[a+(b-a)*self.blend_to_source_translation*w for a,b,w in zip(out_pos,source_current_pos,self.blend_to_source_translation_weights)])
+        out_pos.y*=self.scale_vertical
+        offset=out_pos-self.target_initial_pos
+        out_pos=self.target_initial_pos+om.MVector(offset.x*self.scale_horizontal,offset.y,offset.z*self.scale_horizontal)
+        out_pos+=om.MVector(*self.translation_offset_global)+rotate_vector_by_quat(om.MVector(*self.translation_offset_local),retargeted_rot)
+        out_pos=lerp_vector(self.target_initial_pos,out_pos,self.translation_alpha)
+        self.pelvis_translation_delta=out_pos-unmodified
 
         return out_pos, retargeted_rot

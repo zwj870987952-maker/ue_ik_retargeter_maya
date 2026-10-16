@@ -139,7 +139,8 @@ class BoneChain(object):
         p1, r1 = _get_bone_xform(b1)
 
         interp_pos = lerp_vector(p0, p1, local_alpha)
-        interp_rot = slerp(r0, r1, local_alpha).normal()
+        from .math_utils import fast_lerp
+        interp_rot = fast_lerp(r0, r1, local_alpha)
         return interp_pos, interp_rot
 
 

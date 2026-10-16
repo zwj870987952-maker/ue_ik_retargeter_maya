@@ -96,4 +96,34 @@ class PoleVectorTests(unittest.TestCase):
                         result=pole.bend_measure(out[hip][:3],out[knee][:3],out[end][:3])
                         self.assertGreater(pole.dot(result['pole'],front),5.)
 
+class LimbPlaneTests(unittest.TestCase):
+    def poses(self,straight=False):
+        points=[[0,0,0],[0,-1,0 if straight else .3],[0,-2,0],[0,-2,1],[.1,-.5,.2]]
+        return [p+[0.,0.,0.,1.,1.,1.,1.] for p in points]
+    def reference(self,poses):
+        return pole.build_limb_plane([-1,0,1,2,0],['hip','knee','ankle','ball','twist'],0,1,2,poses)
+    def test_swivel_removed_without_moving_endpoints_or_foot_rotation(self):
+        inputs=self.poses();solved=copy.deepcopy(inputs);solved[1][:3]=[.3,-1,0];solved[4][:3]=[.2,-.5,-.1]
+        out=pole.stabilize_limb_planes(inputs,solved,[self.reference(inputs)])
+        self.assertLess(pole.length(pole.sub(out[1][:3],inputs[1][:3])),1e-10)
+        self.assertEqual(out[2],solved[2]);self.assertEqual(out[3],solved[3]);self.assertEqual(out[0][:3],solved[0][:3])
+        for a,b in [(0,1),(1,2),(0,4)]:self.assertAlmostEqual(pole.length(pole.sub(out[a][:3],out[b][:3])),pole.length(pole.sub(solved[a][:3],solved[b][:3])))
+        self.assertEqual(solved[1][:3],[.3,-1,0])
+    def test_identity_pose_and_zero_strength(self):
+        inputs=self.poses();self.assertEqual(pole.stabilize_limb_planes(inputs,inputs,[self.reference(inputs)]),inputs)
+        self.assertIs(pole.stabilize_limb_planes(inputs,inputs,[self.reference(inputs)],0),inputs)
+    def test_straight_pose_uses_toe_reference_when_crouched(self):
+        inputs=self.poses(True);solved=copy.deepcopy(inputs);solved[2][1]=-1.5;solved[1][:3]=[math.sqrt(1-.75**2),-.75,0]
+        out=pole.stabilize_limb_planes(inputs,solved,[self.reference(inputs)])
+        self.assertGreater(out[1][2],.6);self.assertAlmostEqual(out[1][0],0.);self.assertEqual(out[2],solved[2])
+    def test_animated_reverse_bend_takes_precedence(self):
+        reference=self.poses();inputs=self.poses();inputs[1][2]=-.3;solved=copy.deepcopy(inputs);solved[1][:3]=[.3,-1,0]
+        out=pole.stabilize_limb_planes(inputs,solved,[self.reference(reference)])
+        self.assertLess(out[1][2],-.29)
+    def test_partial_strength_and_random_evaluation_order(self):
+        inputs=self.poses();solved=copy.deepcopy(inputs);solved[1][:3]=[.3,-1,0];ref=self.reference(inputs)
+        half=pole.stabilize_limb_planes(inputs,solved,[ref],.5);self.assertGreater(half[1][0],.2);self.assertGreater(half[1][2],.2)
+        full=pole.stabilize_limb_planes(inputs,solved,[ref]);pole.stabilize_limb_planes(self.poses(True),solved,[ref])
+        self.assertEqual(full,pole.stabilize_limb_planes(inputs,solved,[ref]))
+
 if __name__=='__main__':unittest.main(verbosity=2)

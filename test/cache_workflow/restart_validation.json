@@ -1,0 +1,22 @@
+{
+  "pid": 42712,
+  "restored_unknown_solvers": 2,
+  "animation_curve_count": 2403,
+  "checks": {
+    "Source": {
+      "bones": 101,
+      "sample_frames": 11,
+      "original_cache_matrix_error": 8.659961636681146e-12,
+      "ue_max_position_cm": 0.0006976494168431317,
+      "ue_max_rotation_degrees": 0.014476117671477915
+    },
+    "Target": {
+      "bones": 65,
+      "sample_frames": 11,
+      "original_cache_matrix_error": 1.1213145682809067e-08,
+      "ue_max_position_cm": 0.0015955402952207113,
+      "ue_max_rotation_degrees": 0.014450288036231192
+    }
+  },
+  "scene_saved": false
+}

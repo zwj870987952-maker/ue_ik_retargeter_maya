@@ -610,7 +610,10 @@ class MayaSceneAssetBuilder(object):
                         pmm = cmds.createNode("pointMatrixMult", name=pmm_name, skipSelect=True)
                         cmds.setAttr(pmm + ".inPoint", 0.0, 0.0, 0.0, type="double3")
                         cmds.setAttr(pmm + ".vectorMultiply", False)
-                        cmds.connectAttr(j_dag + ".worldMatrix[0]", pmm + ".inMatrix", force=True)
+                        local_matrix=cmds.createNode('multMatrix',name=node_name+'_LocalMatrix_'+str(cv_idx),skipSelect=True)
+                        cmds.connectAttr(j_dag+'.worldMatrix[0]',local_matrix+'.matrixIn[0]')
+                        cmds.connectAttr(crv_dag+'.worldInverseMatrix[0]',local_matrix+'.matrixIn[1]')
+                        cmds.connectAttr(local_matrix+'.matrixSum',pmm+'.inMatrix',force=True)
                         cmds.connectAttr(
                             pmm + ".output",
                             "{}.controlPoints[{}]".format(crv_shape, cv_idx),

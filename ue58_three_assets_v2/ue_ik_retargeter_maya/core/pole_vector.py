@@ -154,6 +154,62 @@ def resolve_reference(reference,p0,p1,p2,root_rotation):
     result['orientation_known']=result['source']=='geometry' or reference.get('orientation_known',True)
     return result
 
+
+def build_limb_plane(parents,names,hip,knee,end,reference):
+    """Capture a deterministic swivel reference and the limb's side branches.
+
+    Positions and quaternions must share one coordinate system (native PBIK
+    poses are supported). The endpoint subtree is excluded from swivel changes.
+    """
+    a,b,c=[reference[i][:3] for i in (hip,knee,end)]
+    measure=bend_measure(a,b,c);axis=measure['axis'];direction=unit(measure['pole'])
+    known=measure['height_ratio']>1e-5
+    if not known:
+        toes=[i for i,p in enumerate(parents) if p==end and any(t in names[i].lower() for t in ('toe','ball'))]
+        for toe in toes:
+            candidate=unit(project(sub(reference[toe][:3],c),axis))
+            if length(candidate)>1e-10:direction=candidate;known=True;break
+    if not known:return None
+    members=[]
+    for i in range(len(parents)):
+        ancestor=i
+        while ancestor>=0 and ancestor not in (hip,end):ancestor=parents[ancestor]
+        if ancestor==hip:members.append(i)
+    q=reference[hip][3:7]
+    return dict(hip=hip,knee=knee,end=end,members=members,
+                local_chord=rotate(axis,inverse(q)),local_direction=rotate(direction,inverse(q)))
+
+
+def stabilize_limb_planes(inputs,solved,references,strength=1.):
+    """Remove unconstrained limb swivel while retaining the PBIK endpoint solve.
+
+    Rotate the limb around its solved hip-to-ankle line. The hip, ankle, foot
+    orientation, bone lengths and pelvis solution stay unchanged. Clearly
+    animated input planes, including reverse bends, take precedence. No history
+    or previous-frame cache is used.
+    """
+    strength=max(0.,min(1.,float(strength)))
+    if not strength or not references:return solved
+    output=[list(p) for p in solved]
+    for ref in references:
+        hip,knee,end=[ref[k] for k in ('hip','knee','end')]
+        a,b,c=[inputs[i][:3] for i in (hip,knee,end)]
+        source=bend_measure(a,b,c)
+        if source['height_ratio']>1e-5:direction=unit(source['pole'])
+        else:
+            q=inputs[hip][3:7]
+            direction=transport_direction(rotate(ref['local_chord'],q),rotate(ref['local_direction'],q),source['axis'])
+        p0,p1,p2=[output[i][:3] for i in (hip,knee,end)]
+        target=bend_measure(p0,p1,p2)
+        if target['height_ratio']<1e-10:continue
+        axis=target['axis'];desired=transport_direction(source['axis'],direction,axis);actual=unit(target['pole'])
+        angle=math.atan2(dot(axis,cross(actual,desired)),max(-1.,min(1.,dot(actual,desired))))*strength
+        if abs(angle)<1e-10:continue
+        delta=mul(axis,math.sin(angle*.5))+[math.cos(angle*.5)]
+        for i in ref['members']:
+            pose=output[i];pose[:3]=add(p0,rotate(sub(pose[:3],p0),delta));pose[3:7]=qmul(delta,pose[3:7])
+    return output
+
 def calibrate_knee_settings(skeleton,chains,bone_settings,positions=None,rotations=None):
     """Copy settings, calibrating generated knee signs from actual bone frames."""
     from .pbik_native import to_engine_pose

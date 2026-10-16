@@ -70,6 +70,8 @@ class RetargeterWindow(QtWidgets.QDialog):
         self.processor = None
         self.rig_driver = None
         self.cached_bind_data = None
+        self.cache_manifest = None
+        self.session_root = None
 
         self._build_ui()
         self._init_defaults()
@@ -129,13 +131,13 @@ class RetargeterWindow(QtWidgets.QDialog):
 
         # --- 2. Step 1: UE 5.8 3-Asset Generation (From Current Frame Pose) ---
         cache_box = QtWidgets.QGroupBox(
-            "第一步：以当前帧作为绑定 Pose 生成 UE 5.8 标准三资产 (IK_Source / IK_Target / RTG)"
+            "第一步：保存 A/B 全身 IK 缓存（当前场景不变）"
         )
         cache_layout = QtWidgets.QVBoxLayout(cache_box)
         cache_layout.setSpacing(6)
 
         path_bar = QtWidgets.QHBoxLayout()
-        path_bar.addWidget(QtWidgets.QLabel("三资产输出目录 / RTG文件:"))
+        path_bar.addWidget(QtWidgets.QLabel("缓存目录 / .ma / .rtg.json:"))
         self.cache_path_edit = QtWidgets.QLineEdit()
         default_dir = os.path.join(os.path.expanduser("~"), "ue58_retarget_assets").replace("\\", "/")
         self.cache_path_edit.setText(default_dir)
@@ -148,7 +150,7 @@ class RetargeterWindow(QtWidgets.QDialog):
 
         btn_row = QtWidgets.QHBoxLayout()
         self.build_cache_btn = QtWidgets.QPushButton(
-            "📌 1. 以当前帧为绑定Pose 生成三大资产 + 实时全身IK (Build 3 Assets)"
+            "📌 1. 生成并另存 A/B 全身 IK 缓存"
         )
         self.build_cache_btn.setStyleSheet(
             "background-color: #2e7d32; color: white; font-weight: bold; padding: 8px; border-radius: 5px;"
@@ -161,19 +163,22 @@ class RetargeterWindow(QtWidgets.QDialog):
         self.reset_fbik_btn.clicked.connect(self._on_reset_fbik_goals)
         btn_row.addWidget(self.reset_fbik_btn)
 
-        self.reset_pose_btn = QtWidgets.QPushButton("↩ 恢复 B 原始建立姿态")
+        self.reset_pose_btn = QtWidgets.QPushButton("删除缓存系统，保留 B 动画")
         self.reset_pose_btn.setStyleSheet("padding: 8px;")
         self.reset_pose_btn.clicked.connect(self._on_reset_target_bind_pose)
         btn_row.addWidget(self.reset_pose_btn)
 
-        self.load_cache_btn = QtWidgets.QPushButton("📂 加载 RTG 资产 (.rtg.json)")
+        self.load_cache_btn = QtWidgets.QPushButton("📂 选择缓存 (.ma / .rtg.json)")
         self.load_cache_btn.setStyleSheet("padding: 8px;")
         self.load_cache_btn.clicked.connect(self._on_load_cache)
         btn_row.addWidget(self.load_cache_btn)
         cache_layout.addLayout(btn_row)
+        self.ue_profile_btn=QtWidgets.QPushButton("应用 UE 导出的 RTG 配置，另存缓存...")
+        self.ue_profile_btn.clicked.connect(self._on_apply_ue_profile)
+        cache_layout.addWidget(self.ue_profile_btn)
 
         self.cache_status_label = QtWidgets.QLabel(
-            "状态：尚未生成三大标准资产（请在当前帧将 A 和 B 置于参考姿态，选中后点击上方绿色按钮）"
+            "先将 A/B 置于参考姿势生成缓存，再给原 A 添加动画。"
         )
         self.cache_status_label.setStyleSheet("color: #f39c12; font-size: 12px;")
         cache_layout.addWidget(self.cache_status_label)
@@ -181,18 +186,22 @@ class RetargeterWindow(QtWidgets.QDialog):
         main_layout.addWidget(cache_box)
 
         # --- 3. Step 2: Animation Retarget Execution ---
-        one_click_box = QtWidgets.QGroupBox("第二步：根据三大资产与 UE 5.8 算子栈将 A 的动画重定向给 B (Step 2: Retarget Animation)")
+        one_click_box = QtWidgets.QGroupBox("第二步：导入缓存，重定向 A 动画并烘焙回原 B")
         one_click_layout = QtWidgets.QVBoxLayout(one_click_box)
 
         ops_bar = QtWidgets.QHBoxLayout()
-        self.enable_ik_cb = QtWidgets.QCheckBox("启用四肢 IK 求解算子 (IKChainsOp + RunIKRigOp)")
-        self.enable_ik_cb.setChecked(True)
+        self.enable_ik_cb = QtWidgets.QCheckBox("启用目标全身 IK")
+        self.enable_ik_cb.setChecked(False)
+        self.enable_ik_cb.setToolTip("参照当前 UE RTG：关闭 Run IK Rig；打开后在 FK 输出上统一执行目标全身 IK。")
         ops_bar.addWidget(self.enable_ik_cb)
 
-        self.enable_pv_cb = QtWidgets.QCheckBox("启用极向量对齐算子 (AlignPoleVectorOp - 肘/膝弯曲平面校准)")
-        self.enable_pv_cb.setChecked(True)
+        self.enable_pv_cb = QtWidgets.QCheckBox("额外对齐肘/膝极向量")
+        self.enable_pv_cb.setChecked(False)
         ops_bar.addWidget(self.enable_pv_cb)
         one_click_layout.addLayout(ops_bar)
+        self.keep_systems_cb = QtWidgets.QCheckBox("重定向后保留 A/B 全身 IK 系统，便于检查（测试阶段）")
+        self.keep_systems_cb.setChecked(True)
+        one_click_layout.addWidget(self.keep_systems_cb)
 
         time_bar = QtWidgets.QHBoxLayout()
         time_bar.addWidget(QtWidgets.QLabel("时间线起止帧 (Frame Range):"))
@@ -217,9 +226,12 @@ class RetargeterWindow(QtWidgets.QDialog):
         self.one_click_btn.clicked.connect(self._on_one_click_bake)
         one_click_layout.addWidget(self.one_click_btn)
 
-        preview_btn = QtWidgets.QPushButton("👁 预览当前帧重定向效果 (Preview Current Frame)")
+        preview_btn = QtWidgets.QPushButton("👁 选中保留的 A/B 系统，播放时间轴检查")
         preview_btn.clicked.connect(self._on_preview_frame)
         one_click_layout.addWidget(preview_btn)
+        self.rebake_btn=QtWidgets.QPushButton("调整保留系统后，重新烘焙 B")
+        self.rebake_btn.clicked.connect(self._on_rebake_cached_output)
+        one_click_layout.addWidget(self.rebake_btn)
 
         main_layout.addWidget(one_click_box)
 
@@ -241,7 +253,7 @@ class RetargeterWindow(QtWidgets.QDialog):
         self.floor_slider = QtWidgets.QDoubleSpinBox()
         self.floor_slider.setRange(0.0, 1.0)
         self.floor_slider.setSingleStep(0.1)
-        self.floor_slider.setValue(1.0)
+        self.floor_slider.setValue(0.0)
         param_grid.addWidget(self.floor_slider, 0, 3)
         adv_layout.addLayout(param_grid)
 
@@ -258,7 +270,17 @@ class RetargeterWindow(QtWidgets.QDialog):
     def _on_hot_reload(self):
         """Hot-reloads all plugin modules and re-opens the updated UI."""
         import ue_ik_retargeter_maya
-        ue_ik_retargeter_maya.launch(hot_reload=True)
+        values=[self.src_root_edit.text(),self.tgt_root_edit.text(),self.cache_path_edit.text()]
+        manifest=self.cache_manifest;session=self.session_root
+        flags=[self.enable_ik_cb.isChecked(),self.enable_pv_cb.isChecked(),self.keep_systems_cb.isChecked()]
+        parameters=[self.height_slider.value(),self.floor_slider.value()]
+        frames=[self.start_frame_spin.value(),self.end_frame_spin.value()]
+        window=ue_ik_retargeter_maya.launch(hot_reload=True)
+        for widget,value in zip([window.src_root_edit,window.tgt_root_edit,window.cache_path_edit],values):widget.setText(value)
+        for widget,value in zip([window.enable_ik_cb,window.enable_pv_cb,window.keep_systems_cb],flags):widget.setChecked(value)
+        window.height_slider.setValue(parameters[0]);window.floor_slider.setValue(parameters[1])
+        window.start_frame_spin.setValue(frames[0]);window.end_frame_spin.setValue(frames[1])
+        window.cache_manifest=manifest;window.session_root=session;window._refresh_table()
 
     def _init_defaults(self):
         self._sync_timeline_range()
@@ -298,150 +320,92 @@ class RetargeterWindow(QtWidgets.QDialog):
             pass
 
     def _on_build_and_save_cache(self):
-        """
-        Step 1: Captures A and B's CURRENT frame pose as the bind pose,
-        characterizes 21+ chains, auto-aligns Target B's Retarget Pose,
-        and generates the 3 UE 5.8 assets in the Maya Outliner + exports the 3 JSON files.
-        """
-        src = self.src_root_edit.text().strip()
-        tgt = self.tgt_root_edit.text().strip()
-        if not (src and tgt and cmds.objExists(src) and cmds.objExists(tgt)):
+        from ..core.cache_workflow import build_cache
+        src=self.src_root_edit.text().strip();tgt=self.tgt_root_edit.text().strip()
+        if not (cmds.objExists(src) and cmds.objExists(tgt)):
             self._auto_detect_skeletons()
-            src = self.src_root_edit.text().strip()
-            tgt = self.tgt_root_edit.text().strip()
-
-        if not (src and tgt and cmds.objExists(src) and cmds.objExists(tgt)):
-            QtWidgets.QMessageBox.warning(self, "缺少角色", "请先在场景中选择 A 和 B 两个角色的骨架。")
-            return
-
-        raw_path = self.cache_path_edit.text().strip()
-        if raw_path.endswith(".json"):
-            out_dir = os.path.dirname(raw_path)
-        else:
-            out_dir = raw_path or None
-
-        self.processor = IKRetargetProcessor(src, tgt)
-        self.processor.enable_ik_pass = self.enable_ik_cb.isChecked()
-        self.processor.enable_pole_vector_op = self.enable_pv_cb.isChecked()
-
-        result = self.processor.generate_three_assets(
-            output_dir=out_dir,
-            build_in_scene=True,
-            apply_aligned_pose=True,
-            capture_current_frame=True,
-        )
-        self.rig_driver = ControlRigDriver(self.processor)
-        self._refresh_table()
-
-        self.cached_bind_data = result.get("bundle")
-        rtg_file = result["files"]["RTG_AutoGenerated"].replace("\\", "/")
-        self.cache_path_edit.setText(rtg_file)
-
-        self.cache_status_label.setText(
-            "✅ 已以当前帧建立三大资产：{} | {} | {}".format(
-                self.processor.source_ikrig_asset.asset_name,
-                self.processor.target_ikrig_asset.asset_name,
-                self.processor.rtg_asset.asset_name,
-            )
-        )
-        self.cache_status_label.setStyleSheet("color: #2ecc71; font-weight: bold; font-size: 12px;")
-
-        QtWidgets.QMessageBox.information(
-            self,
-            "UE 5.8 标准三资产生成完成",
-            "已将当前帧 Pose 作为绑定 Pose，在大纲视图 (Outliner) 的 `UE58_RetargetAssets_Grp` 组下生成并导出 3 个独立资产文件：\n\n"
-            "1. {src_name}.ikrig.json (模板: {src_tpl}, {src_chains}条骨骼链, {src_goals}个IK目标)\n"
-            "2. {tgt_name}.ikrig.json (模板: {tgt_tpl}, {tgt_chains}条骨骼链, {tgt_goals}个IK目标)\n"
-            "3. {rtg_name}.rtg.json ({map_cnt}条映射链, 7层RetargetOp栈, 已对齐B的姿态)\n\n"
-            "文件保存位置：\n{rtg_file}".format(
-                src_name=self.processor.source_ikrig_asset.asset_name,
-                src_tpl=self.processor.source_profile["template_name"],
-                src_chains=len(self.processor.source_profile["chains"]),
-                src_goals=len(self.processor.source_profile["ik_goals"]),
-                tgt_name=self.processor.target_ikrig_asset.asset_name,
-                tgt_tpl=self.processor.target_profile["template_name"],
-                tgt_chains=len(self.processor.target_profile["chains"]),
-                tgt_goals=len(self.processor.target_profile["ik_goals"]),
-                rtg_name=self.processor.rtg_asset.asset_name,
-                map_cnt=len(self.processor.chain_mappings),
-                rtg_file=rtg_file,
-            )
-        )
+            src=self.src_root_edit.text().strip();tgt=self.tgt_root_edit.text().strip()
+        raw=self.cache_path_edit.text().strip()
+        directory=os.path.dirname(raw) if raw.endswith((".json",".ma")) else raw
+        try:
+            result=build_cache(src,tgt,directory or None,self.enable_ik_cb.isChecked(),self.enable_pv_cb.isChecked(),self._pelvis_settings())
+            self.cache_manifest=result['manifest']
+            self.cache_path_edit.setText(result['rtg'].replace("\\","/"))
+            self._refresh_table()
+            self.cache_status_label.setText("缓存已保存，原 A/B 及动画保持不变："+result['ma'])
+            self.cache_status_label.setStyleSheet("color: #2ecc71;")
+        except Exception as error:
+            QtWidgets.QMessageBox.warning(self,"缓存生成失败",str(error))
 
     def _on_reset_fbik_goals(self):
-        """Resets all IK Goal locators back to their initial base positions and re-evaluates FBIK."""
-        if not self.processor:
-            return
-        from ..core.math_utils import set_world_transform
-        for fbik_solv in (
-            getattr(self.processor, "source_fbik_solver", None),
-            getattr(self.processor, "target_fbik_solver", None),
-        ):
-            if fbik_solv is not None:
-                fbik_solv._is_solving = True
-                try:
-                    for g_info in fbik_solv.goal_locators.values():
-                        loc_dag = g_info["locator_dag"]
-                        if cmds.objExists(loc_dag):
-                            set_world_transform(loc_dag, g_info["init_pos"], g_info["init_rot"])
-                finally:
-                    fbik_solv._is_solving = False
-                fbik_solv.solve_from_scene_goals()
+        if not self.session_root or not cmds.objExists(self.session_root):return
+        import json
+        import maya.api.OpenMaya as om
+        from ..core.cache_workflow import scene_state
+        from ..core.math_utils import trs_to_matrix
+        namespace=cmds.getAttr(self.session_root+'.ue58SessionNamespace')
+        from ..core.cache_workflow import _namespace_nodes
+        with scene_state(undo_name='Reset cached IK controls'):
+            for node in _namespace_nodes(namespace):
+                if cmds.nodeType(node)!='ue58PBIKSolver':continue
+                config=json.loads(cmds.getAttr(node+'.configuration'))
+                matrix=om.MMatrix(cmds.getAttr(node+'.externalParentMatrix'))
+                for i,g in enumerate(config['goals']):
+                    controls=cmds.listConnections(node+'.goalMatrix[{}]'.format(i),s=True,d=False) or []
+                    if controls:
+                        pose=trs_to_matrix(om.MVector(*g['initial_position']),om.MQuaternion(*g['initial_rotation']))*matrix
+                        cmds.xform(controls[0],ws=True,matrix=list(pose))
 
     def _on_reset_target_bind_pose(self):
-        """Resets Target B in the viewport back to its initial captured bind pose."""
-        if self.processor:
-            from ..core.math_utils import set_world_transform, get_world_transform
-            fbik_solv = getattr(self.processor, "target_fbik_solver", None)
-            if fbik_solv:
-                fbik_solv._is_solving = True
-            try:
-                for idx, j in enumerate(self.processor.target_skeleton.joint_names):
-                    if idx == 0:
-                        set_world_transform(
-                            j,
-                            self.processor.target_skeleton.rest_world_pos[j],
-                            self.processor.target_skeleton.rest_world_rot[j]
-                        )
-                    else:
-                        set_world_transform(j, quat=self.processor.target_skeleton.rest_world_rot[j])
-                if fbik_solv:
-                    for g_info in fbik_solv.goal_locators.values():
-                        loc_dag = g_info["locator_dag"]
-                        b_dag = g_info["bone_dag"]
-                        if cmds.objExists(loc_dag) and cmds.objExists(b_dag):
-                            b_pos, b_rot = get_world_transform(b_dag)
-                            set_world_transform(loc_dag, b_pos, b_rot)
-            finally:
-                if fbik_solv:
-                    fbik_solv._is_solving = False
+        from ..core.cache_workflow import remove_cached_systems
+        if self.session_root and cmds.objExists(self.session_root):
+            remove_cached_systems(self.session_root)
+            self.session_root=None
+            self.cache_status_label.setText('已删除缓存系统，原 B 的烘焙动画保留。')
 
     def _on_load_cache(self):
-        """Loads an existing RTG_AutoGenerated.rtg.json (and its companion .ikrig.json files)."""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "选择 RTG_AutoGenerated.rtg.json 资产文件",
-            self.cache_path_edit.text(),
-            "UE5.8 Retargeter Asset (*.rtg.json *.retarget.json *.json)"
-        )
-        if not path:
-            return
-        self.cache_path_edit.setText(path.replace("\\", "/"))
+        import json
+        path,_=QtWidgets.QFileDialog.getOpenFileName(self,'选择 A/B 全身 IK 缓存',self.cache_path_edit.text(),
+            'A/B Rig Cache (*.rig.ma *.ma *.rtg.json)')
+        if not path:return
+        self.cache_path_edit.setText(path.replace('\\','/'))
+        self.cache_manifest=None
+        companion=path[:-7]+'.rtg.json' if path.endswith('.rig.ma') else None
+        config_path=path if path.endswith('.json') else companion
+        try:
+            if config_path and os.path.isfile(config_path):
+                with open(config_path,encoding='utf-8') as stream:data=json.load(stream)
+                if data.get('schema')!=1 or 'cache_ma' not in data:raise ValueError('请先按第一步生成 A/B .ma 缓存。')
+                self.cache_manifest=data;self._sync_cache_settings();self._refresh_table()
+        except Exception as error:
+            QtWidgets.QMessageBox.warning(self,'缓存格式',str(error));return
+        self.cache_status_label.setText('缓存已选定，点击重定向时才导入场景。')
 
-        processor = self._ensure_processor(apply_cache=False)
-        if not processor:
-            return
+    def _pelvis_settings(self):
+        return {'scale_vertical':self.height_slider.value(),'floor_constraint_weight':self.floor_slider.value()}
 
-        if path.endswith(".retarget.json"):
-            self.cached_bind_data = processor.load_retarget_cache(path)
-        else:
-            self.cached_bind_data = processor.load_three_assets(path)
-            self.enable_ik_cb.setChecked(processor.enable_ik_pass)
-            self.enable_pv_cb.setChecked(processor.enable_pole_vector_op)
+    def _sync_cache_settings(self):
+        if not self.cache_manifest:return
+        ops={o['op_type']:o for o in self.cache_manifest['bundle']['rtg']['retarget_ops']}
+        self.enable_ik_cb.setChecked(ops.get('FIKRetargetRunIKRigOp',{}).get('enabled',False))
+        self.enable_pv_cb.setChecked(ops.get('FIKRetargetAlignPoleVectorOp',{}).get('enabled',False))
+        pelvis=ops.get('FIKRetargetPelvisMotionOp',{}).get('settings',{})
+        self.height_slider.setValue(pelvis.get('scale_vertical',1.))
+        self.floor_slider.setValue(pelvis.get('floor_constraint_weight',0.))
 
-        self._refresh_table()
-        self.cache_status_label.setText("✅ 已从文件加载 UE 5.8 三大资产：{}".format(path))
-        self.cache_status_label.setStyleSheet("color: #2ecc71; font-weight: bold; font-size: 12px;")
+    def _on_apply_ue_profile(self):
+        from ..core.cache_workflow import cache_with_ue_profile
+        path=self.cache_path_edit.text().strip()
+        if not os.path.isfile(path):
+            QtWidgets.QMessageBox.warning(self,'缺少缓存','请先生成或选择 A/B 缓存。');return
+        profile,_=QtWidgets.QFileDialog.getOpenFileName(self,'选择 UE 导出的 RTG 配置快照',os.path.dirname(path),'UE RTG Profile (*.json)')
+        if not profile:return
+        try:
+            result=cache_with_ue_profile(path,profile)
+            self.cache_manifest=result['manifest'];self.cache_path_edit.setText(result['rtg'].replace('\\','/'))
+            self._sync_cache_settings();self._refresh_table()
+            self.cache_status_label.setText('UE 参考姿势、链映射和开关已另存到缓存；原场景保持不变。')
+        except Exception as error:QtWidgets.QMessageBox.warning(self,'UE 配置应用失败',str(error))
 
     def _ensure_processor(self, apply_cache=True):
         src = resolve_skeleton_root_joint(self.src_root_edit.text().strip())
@@ -482,52 +446,76 @@ class RetargeterWindow(QtWidgets.QDialog):
         return self.processor
 
     def _refresh_table(self):
-        if not self.processor:
+        if self.cache_manifest:
+            rows=self.cache_manifest['bundle']['rtg']['chain_mappings']
+            self.chain_table.setRowCount(len(rows))
+            for row,m in enumerate(rows):
+                for col,key in enumerate(['target_chain','source_start_bone','source_end_bone','target_start_bone','target_end_bone','ik_goal_name']):
+                    self.chain_table.setItem(row,col,QtWidgets.QTableWidgetItem(str(m.get(key,'-'))))
             return
-        src_skel = self.processor.source_skeleton
-        tgt_skel = self.processor.target_skeleton
+        if not self.processor:return
         self.chain_table.setRowCount(len(self.processor.chain_mappings))
-        for row, mapping in enumerate(self.processor.chain_mappings):
-            self.chain_table.setItem(row, 0, QtWidgets.QTableWidgetItem(mapping.name))
-            self.chain_table.setItem(row, 1, QtWidgets.QTableWidgetItem(src_skel.get_clean_name(mapping.source_chain.start_bone)))
-            self.chain_table.setItem(row, 2, QtWidgets.QTableWidgetItem(src_skel.get_clean_name(mapping.source_chain.end_bone)))
-            self.chain_table.setItem(row, 3, QtWidgets.QTableWidgetItem(tgt_skel.get_clean_name(mapping.target_chain.start_bone)))
-            self.chain_table.setItem(row, 4, QtWidgets.QTableWidgetItem(tgt_skel.get_clean_name(mapping.target_chain.end_bone)))
-            self.chain_table.setItem(row, 5, QtWidgets.QTableWidgetItem(mapping.ik_goal_name or "-"))
+        for row,m in enumerate(self.processor.chain_mappings):
+            values=[m.name,m.source_chain.start_bone,m.source_chain.end_bone,m.target_chain.start_bone,m.target_chain.end_bone,m.ik_goal_name]
+            for col,v in enumerate(values):self.chain_table.setItem(row,col,QtWidgets.QTableWidgetItem(v))
 
     def _on_preview_frame(self):
-        processor = self._ensure_processor(apply_cache=True)
-        if not processor:
-            return
-        processor.retarget_frame()
+        if self.session_root and cmds.objExists(self.session_root):
+            cmds.select(self.session_root,r=True)
+            cmds.viewFit()
+        else:
+            self.cache_status_label.setText('请先执行重定向并保留系统，然后播放时间轴检查。')
 
     def _on_one_click_bake(self):
-        """Retargets and bakes animation from A to B using the locked bind-pose cache."""
-        processor = self._ensure_processor(apply_cache=True)
-        if not processor:
+        from ..core.cache_workflow import retarget_from_cache
+        path=self.cache_path_edit.text().strip()
+        if not os.path.isfile(path):
+            QtWidgets.QMessageBox.warning(self,'缺少缓存','先生成或选择 A/B 的 .ma / .rtg.json 缓存。')
             return
+        start=self.start_frame_spin.value();end=self.end_frame_spin.value()
+        dialog=QtWidgets.QProgressDialog('通过缓存系统重定向动画...',None,0,2*(end-start+1),self)
+        dialog.setWindowModality(QtCore.Qt.WindowModal)
+        dialog.show()
+        def progress(stage,index,total):
+            if index%10==0:
+                dialog.setLabelText(('复制 A 动画' if stage.startswith('Copy') else '求解并烘焙 B')+'：{}/{}'.format(index,total))
+                dialog.setValue(index+(total if stage.startswith('Retarget') else 0))
+                QtWidgets.QApplication.processEvents()
+        try:
+            if self.session_root and cmds.objExists(self.session_root):
+                from ..core.cache_workflow import remove_cached_systems
+                remove_cached_systems(self.session_root)
+                self.session_root=None
+            result=retarget_from_cache(path,self.src_root_edit.text().strip(),self.tgt_root_edit.text().strip(),start,end,
+                self.keep_systems_cb.isChecked(),progress=progress,enable_ik=self.enable_ik_cb.isChecked(),align_poles=self.enable_pv_cb.isChecked(),pelvis_settings=self._pelvis_settings())
+            self.session_root=result['session_root'] if result['retained'] else None
+            self.cache_status_label.setText('已重定向 {} 帧到原 B；{}'.format(result['frames'],'A/B 系统保留，播放时间轴可检查。' if result['retained'] else '缓存系统已删除。'))
+        except Exception as error:
+            QtWidgets.QMessageBox.warning(self,'重定向失败',str(error))
+        finally:dialog.close()
 
-        s_f = self.start_frame_spin.value()
-        e_f = self.end_frame_spin.value()
-
-        progress = QtWidgets.QProgressDialog(
-            "正在根据 UE 5.8 三大资产执行动画重定向烘焙...", "取消", s_f, e_f, self
-        )
-        progress.setWindowModality(QtCore.Qt.WindowModal)
-
-        for f in range(s_f, e_f + 1):
-            if progress.wasCanceled():
-                break
-            cmds.currentTime(f, e=True)
-            processor.retarget_frame()
-            for j in processor.target_skeleton.joint_names:
-                cmds.setKeyframe(j, time=f, attribute=['translate', 'rotate'])
-            progress.setValue(f)
-
-        progress.setValue(e_f)
-        QtWidgets.QMessageBox.information(
-            self, "重定向完成", "已根据 UE 5.8 标准三资产数据，将源角色 A 的动画精确重定向并烘焙至目标角色 B！"
-        )
+    def _on_rebake_cached_output(self):
+        from ..core.cache_workflow import bake_cached_output,_namespace_nodes,scene_state
+        import json
+        if not self.session_root or not cmds.objExists(self.session_root):return
+        namespace=cmds.getAttr(self.session_root+'.ue58SessionNamespace')
+        node=next(n for n in _namespace_nodes(namespace) if cmds.nodeType(n)=='ue58PBIKSolver' and cmds.getAttr(n+'.ue58CacheRole')=='Target')
+        config=json.loads(cmds.getAttr(node+'.configuration'))
+        for op in config['retarget_bundle']['rtg']['retarget_ops']:
+            if op['op_type'] in ['FIKRetargetIKChainsOp','FIKRetargetRunIKRigOp']:op['enabled']=self.enable_ik_cb.isChecked()
+            if op['op_type']=='FIKRetargetAlignPoleVectorOp':op['enabled']=self.enable_pv_cb.isChecked()
+            if op['op_type']=='FIKRetargetPelvisMotionOp':op['settings'].update(self._pelvis_settings())
+        config['align_poles']=self.enable_pv_cb.isChecked()
+        dialog=QtWidgets.QProgressDialog('烘焙保留的缓存系统...',None,0,self.end_frame_spin.value()-self.start_frame_spin.value()+1,self)
+        dialog.setWindowModality(QtCore.Qt.WindowModal);dialog.show()
+        def progress(stage,index,total):
+            if index%10==0:dialog.setValue(index);QtWidgets.QApplication.processEvents()
+        try:
+            with scene_state(undo_name='Update retained RTG settings'):cmds.setAttr(node+'.configuration',json.dumps(config),type='string')
+            result=bake_cached_output(self.session_root,self.start_frame_spin.value(),self.end_frame_spin.value(),progress)
+            self.cache_status_label.setText('已将调整后的缓存 B 输出重新烘焙，共 {} 帧。'.format(result['frames']))
+        except Exception as error:QtWidgets.QMessageBox.warning(self,'重新烘焙失败',str(error))
+        finally:dialog.close()
 
 
 def _close_existing_windows():

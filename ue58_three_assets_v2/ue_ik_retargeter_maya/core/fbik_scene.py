@@ -14,6 +14,56 @@ _ACTIVE_CALLBACK_IDS=globals().get('_ACTIVE_CALLBACK_IDS',{})
 DEFAULT_SOLVER_SETTINGS={'root_behavior':'Free','iterations':20,'sub_iterations':10,
     'mass_multiplier':1.,'allow_stretch':False,'global_pull_chain_alpha':0.,'max_angle':30.,'over_relaxation':1.3}
 
+def restore_unknown_solvers():
+    """Recover saved rigs opened before their Python solver plugin was loaded.
+
+    Maya retains the original short attribute names on unknown nodes. Rebuild
+    only these owned solver nodes, preserving all animation curves and rigs.
+    """
+    unknown=[n for n in (cmds.ls(type='unknown') or [])
+        if cmds.unknownNode(n,q=True,realClassName=True)=='ue58PBIKSolver'
+        and cmds.attributeQuery('ue58CacheRole',node=n,exists=True)]
+    if not unknown:return []
+    if 'ue58PBIKSolver' not in cmds.allNodeTypes():
+        cmds.loadPlugin(str(Path(__file__).with_name('ue58_pbik_node.py')),quiet=True)
+    from .cache_workflow import scene_state
+    recovered=[]
+    with scene_state(undo_name='Restore cached UE58 solver nodes'):
+        for old in unknown:
+            text=cmds.getAttr(old+'.cfg')
+            configuration=json.loads(text)
+            if not configuration.get('parents') or 'baseline_offsets' not in configuration:
+                raise ValueError('Invalid saved UE58 solver configuration: '+old)
+            incoming=cmds.listConnections(old,s=True,d=False,p=True,c=True) or []
+            outgoing=cmds.listConnections(old,s=False,d=True,p=True,c=True) or []
+            new=cmds.createNode('ue58PBIKSolver',name=':'+old+'_Restored',skipSelect=True)
+            selection=om.MSelectionList();selection.add(new)
+            instance=om.MFnDependencyNode(selection.getDependNode(0)).userNode()
+            for name in instance.attributes:
+                if name in ['outputOffset','solveMilliseconds']:continue
+                short=cmds.attributeQuery(name,node=new,shortName=True)
+                if not cmds.attributeQuery(short,node=old,exists=True):continue
+                indices=cmds.getAttr(old+'.'+short,multiIndices=True) or [] if cmds.attributeQuery(name,node=new,multi=True) else [None]
+                for index in indices:
+                    suffix='[{}]'.format(index) if index is not None else ''
+                    source=old+'.'+short+suffix;target=new+'.'+name+suffix
+                    if cmds.listConnections(source,s=True,d=False):continue
+                    kind=cmds.getAttr(source,type=True);value=cmds.getAttr(source)
+                    if value is None:continue
+                    if kind=='string':cmds.setAttr(target,value,type='string')
+                    elif kind=='matrix':cmds.setAttr(target,*value,type='matrix')
+                    elif kind in ['double3','float3','long3','short3']:cmds.setAttr(target,*value[0],type=kind)
+                    else:cmds.setAttr(target,value)
+            cmds.addAttr(new,ln='ue58CacheRole',dt='string')
+            cmds.setAttr(new+'.ue58CacheRole',cmds.getAttr(old+'.ue58CacheRole'),type='string')
+            for destination,source in zip(incoming[::2],incoming[1::2]):
+                cmds.connectAttr(source,new+destination[len(old):],force=True)
+            for source,destination in zip(outgoing[::2],outgoing[1::2]):
+                cmds.connectAttr(new+source[len(old):],destination,force=True)
+            cmds.delete(old)
+            recovered.append(cmds.rename(new,':'+old))
+    return recovered
+
 def reload_node_compute():
     """Refresh Python compute methods without deleting existing scene nodes.
 
@@ -33,6 +83,9 @@ def reload_node_compute():
         # Recreate the native cache together with the Python compute method.
         if instance.native:instance.native.close()
         instance.native=None;instance.signature=None
+        runtime=getattr(instance,'retarget_runtime',None)
+        if runtime:runtime.close()
+        instance.retarget_runtime=None;instance.retarget_signature=None
         type(instance).compute=module.UE58PBIKNode.compute
         remove_legacy_pelvis_control(node)
         cmds.dgdirty(node,allPlugs=True)
@@ -143,6 +196,7 @@ class FullBodyIKSolver(object):
     def clear(self):
         if not self.fbik_node or not cmds.objExists(self.fbik_node):return
         for dag,matrix in self.original_offsets.items():
+            if not cmds.objExists(dag):continue
             destination=dag+'.offsetParentMatrix'
             sources=cmds.listConnections(destination,s=True,d=False,plugs=True) or []
             if sources and sources[0].split('.')[0]==self.fbik_node:
@@ -198,6 +252,8 @@ def register_live_fbik_solver(solver,fbik_group_dag):
     cfg={'parents':skel.parent_indices,'root':root,'goals':goals,'native_reference':native_reference,
         'baseline_offsets':[solver.original_offsets[d] for d in skel.joint_names],
         'alignment_rotations':alignment}
+    parent_nodes=cmds.listRelatives(skel.root_joint,parent=True,fullPath=True) or []
+    cfg['initial_external_parent_matrix']=cmds.xform(parent_nodes[0],q=True,ws=True,matrix=True) if parent_nodes else list(om.MMatrix())
     cmds.setAttr(node+'.configuration',json.dumps(cfg),type='string')
     for i,dag in enumerate(skel.joint_names):cmds.connectAttr(dag+'.matrix',node+'.inputLocalMatrix[{}]'.format(i))
     parents=cmds.listRelatives(skel.root_joint,parent=True,fullPath=True) or []
